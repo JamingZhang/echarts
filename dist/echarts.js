@@ -17069,73 +17069,102 @@ function globalBackwardCompat(option, isTheme) {
   });
 }
 
-// src/processor/dataStack.ts
-function dataStack(ecModel) {
-  const stackInfoMap = createHashMap();
-  ecModel.eachSeries(function(seriesModel) {
-    const stack = seriesModel.get("stack");
-    if (stack) {
-      const stackInfoList = stackInfoMap.get(stack) || stackInfoMap.set(stack, []);
-      const data = seriesModel.getData();
-      const stackInfo = {
-        stackResultDimension: data.getCalculationInfo("stackResultDimension"),
-        stackedOverDimension: data.getCalculationInfo("stackedOverDimension"),
-        stackedDimension: data.getCalculationInfo("stackedDimension"),
-        stackedByDimension: data.getCalculationInfo("stackedByDimension"),
-        isStackedByIndex: data.getCalculationInfo("isStackedByIndex"),
-        data,
-        seriesModel
-      };
-      if (!stackInfo.stackedDimension || !(stackInfo.isStackedByIndex || stackInfo.stackedByDimension)) {
-        return;
-      }
-      stackInfoList.length && data.setCalculationInfo("stackedOnSeries", stackInfoList[stackInfoList.length - 1].seriesModel);
-      stackInfoList.push(stackInfo);
-    }
-  });
-  stackInfoMap.each(calculateStack);
-}
-function calculateStack(stackInfoList) {
-  each(stackInfoList, function(targetStackInfo, idxInStack) {
-    const resultVal = [];
-    const resultNaN = [NaN, NaN];
-    const dims = [targetStackInfo.stackResultDimension, targetStackInfo.stackedOverDimension];
-    const targetData = targetStackInfo.data;
-    const isStackedByIndex = targetStackInfo.isStackedByIndex;
-    const stackStrategy = targetStackInfo.seriesModel.get("stackStrategy") || "samesign";
-    targetData.modify(dims, function(v0, v12, dataIndex) {
-      let sum2 = targetData.get(targetStackInfo.stackedDimension, dataIndex);
-      if (isNaN(sum2)) {
-        return resultNaN;
-      }
-      let byValue;
-      let stackedDataRawIndex;
-      if (isStackedByIndex) {
-        stackedDataRawIndex = targetData.getRawIndex(dataIndex);
-      } else {
-        byValue = targetData.get(targetStackInfo.stackedByDimension, dataIndex);
-      }
-      let stackedOver = NaN;
-      for (let j = idxInStack - 1; j >= 0; j--) {
-        const stackInfo = stackInfoList[j];
-        if (!isStackedByIndex) {
-          stackedDataRawIndex = stackInfo.data.rawIndexOf(stackInfo.stackedByDimension, byValue);
-        }
-        if (stackedDataRawIndex >= 0) {
-          const val = stackInfo.data.getByRawIndex(stackInfo.stackResultDimension, stackedDataRawIndex);
-          if (stackStrategy === "all" || stackStrategy === "positive" && val > 0 || stackStrategy === "negative" && val < 0 || stackStrategy === "samesign" && sum2 >= 0 && val > 0 || stackStrategy === "samesign" && sum2 <= 0 && val < 0) {
-            sum2 = addSafe(sum2, val);
-            stackedOver = val;
-            break;
+    //     data processing stage is blocked in stream.
+    //     See <module:echarts/stream/Scheduler#performDataProcessorTasks>
+    // (2) Only register once when import repeatedly.
+    //     Should be executed after series is filtered and before stack calculation.
+
+    function dataStack(ecModel) {
+      var stackInfoMap = createHashMap();
+      ecModel.eachSeries(function (seriesModel) {
+        var stack = seriesModel.get('stack'); // Compatible: when `stack` is set as '', do not stack.
+
+        if (stack) {
+          var stackInfoList = stackInfoMap.get(stack) || stackInfoMap.set(stack, []);
+          var data = seriesModel.getData();
+          var stackInfo = {
+            // Used for calculate axis extent automatically.
+            // TODO: Type getCalculationInfo return more specific type?
+            stackResultDimension: data.getCalculationInfo('stackResultDimension'),
+            stackedOverDimension: data.getCalculationInfo('stackedOverDimension'),
+            stackedDimension: data.getCalculationInfo('stackedDimension'),
+            stackedByDimension: data.getCalculationInfo('stackedByDimension'),
+            isStackedByIndex: data.getCalculationInfo('isStackedByIndex'),
+            data: data,
+            seriesModel: seriesModel
+          }; // If stacked on axis that do not support data stack.
+
+          if (!stackInfo.stackedDimension || !(stackInfo.isStackedByIndex || stackInfo.stackedByDimension)) {
+            return;
           }
+
+          stackInfoList.length && data.setCalculationInfo('stackedOnSeries', stackInfoList[stackInfoList.length - 1].seriesModel);
+          stackInfoList.push(stackInfo);
         }
-      }
-      resultVal[0] = sum2;
-      resultVal[1] = stackedOver;
-      return resultVal;
-    });
-  });
-}
+      });
+      stackInfoMap.each(calculateStack);
+    }
+
+    function calculateStack(stackInfoList) {
+      each(stackInfoList, function (targetStackInfo, idxInStack) {
+        var resultVal = [];
+        var resultNaN = [NaN, NaN];
+        var dims = [targetStackInfo.stackResultDimension, targetStackInfo.stackedOverDimension];
+        var targetData = targetStackInfo.data;
+        var isStackedByIndex = targetStackInfo.isStackedByIndex;
+        var stackStrategy = targetStackInfo.seriesModel.get('stackStrategy') || 'samesign'; // Should not write on raw data, because stack series model list changes
+        // depending on legend selection.
+
+        targetData.modify(dims, function (v0, v1, dataIndex) {
+          var sum = targetData.get(targetStackInfo.stackedDimension, dataIndex); // Consider `connectNulls` of line area, if value is NaN, stackedOver
+          // should also be NaN, to draw a appropriate belt area.
+
+          if (isNaN(sum)) {
+            return resultNaN;
+          }
+
+          var byValue;
+          var stackedDataRawIndex;
+
+          if (isStackedByIndex) {
+            stackedDataRawIndex = targetData.getRawIndex(dataIndex);
+          } else {
+            byValue = targetData.get(targetStackInfo.stackedByDimension, dataIndex);
+          } // If stackOver is NaN, chart view will render point on value start.
+
+
+          var stackedOver = NaN;
+
+          for (var j = idxInStack - 1; j >= 0; j--) {
+            var stackInfo = stackInfoList[j]; // Has been optimized by inverted indices on `stackedByDimension`.
+
+            if (!isStackedByIndex) {
+              stackedDataRawIndex = stackInfo.data.rawIndexOf(stackInfo.stackedByDimension, byValue);
+            }
+
+            if (stackedDataRawIndex >= 0) {
+              var val = stackInfo.data.getByRawIndex(stackInfo.stackResultDimension, stackedDataRawIndex); // Considering positive stack, negative stack and empty data
+
+              if (stackStrategy === 'all' // single stack group
+              || stackStrategy === 'positive' && val > 0 || stackStrategy === 'negative' && val < 0 || stackStrategy === 'samesign' && sum >= 0 && val > 0 // All positive stack
+              || stackStrategy === 'samesign' && sum <= 0 && val < 0 // All negative stack
+              ) {
+                  // The sum has to be very small to be affected by the
+                  // floating arithmetic problem. An incorrect result will probably
+                  // cause axis min/max to be filtered incorrectly.
+                  sum = addSafe(sum, val);
+                  stackedOver = val;
+                  break;
+                }
+            }
+          }
+
+          resultVal[0] = sum;
+          resultVal[1] = stackedOver;
+          return resultVal;
+        });
+      });
+    }
 
 // src/data/Source.ts
 var SourceImpl = class {
@@ -22445,1732 +22474,2501 @@ function getImpl(name) {
   return implsStore[name];
 }
 
-// src/core/echarts.ts
-var version2 = "5.4.1";
-var dependencies = {
-  zrender: "5.4.1"
-};
-var TEST_FRAME_REMAIN_TIME = 1;
-var PRIORITY_PROCESSOR_SERIES_FILTER = 800;
-var PRIORITY_PROCESSOR_DATASTACK = 900;
-var PRIORITY_PROCESSOR_FILTER = 1e3;
-var PRIORITY_PROCESSOR_DEFAULT = 2e3;
-var PRIORITY_PROCESSOR_STATISTIC = 5e3;
-var PRIORITY_VISUAL_LAYOUT = 1e3;
-var PRIORITY_VISUAL_PROGRESSIVE_LAYOUT = 1100;
-var PRIORITY_VISUAL_GLOBAL = 2e3;
-var PRIORITY_VISUAL_CHART = 3e3;
-var PRIORITY_VISUAL_COMPONENT = 4e3;
-var PRIORITY_VISUAL_CHART_DATA_CUSTOM = 4500;
-var PRIORITY_VISUAL_POST_CHART_LAYOUT = 4600;
-var PRIORITY_VISUAL_BRUSH = 5e3;
-var PRIORITY_VISUAL_ARIA = 6e3;
-var PRIORITY_VISUAL_DECAL = 7e3;
-var PRIORITY = {
-  PROCESSOR: {
-    FILTER: PRIORITY_PROCESSOR_FILTER,
-    SERIES_FILTER: PRIORITY_PROCESSOR_SERIES_FILTER,
-    STATISTIC: PRIORITY_PROCESSOR_STATISTIC
-  },
-  VISUAL: {
-    LAYOUT: PRIORITY_VISUAL_LAYOUT,
-    PROGRESSIVE_LAYOUT: PRIORITY_VISUAL_PROGRESSIVE_LAYOUT,
-    GLOBAL: PRIORITY_VISUAL_GLOBAL,
-    CHART: PRIORITY_VISUAL_CHART,
-    POST_CHART_LAYOUT: PRIORITY_VISUAL_POST_CHART_LAYOUT,
-    COMPONENT: PRIORITY_VISUAL_COMPONENT,
-    BRUSH: PRIORITY_VISUAL_BRUSH,
-    CHART_ITEM: PRIORITY_VISUAL_CHART_DATA_CUSTOM,
-    ARIA: PRIORITY_VISUAL_ARIA,
-    DECAL: PRIORITY_VISUAL_DECAL
-  }
-};
-var IN_MAIN_PROCESS_KEY = "__flagInMainProcess";
-var PENDING_UPDATE = "__pendingUpdate";
-var STATUS_NEEDS_UPDATE_KEY = "__needsUpdateStatus";
-var ACTION_REG = /^[a-zA-Z0-9_]+$/;
-var CONNECT_STATUS_KEY = "__connectUpdateStatus";
-var CONNECT_STATUS_PENDING = 0;
-var CONNECT_STATUS_UPDATING = 1;
-var CONNECT_STATUS_UPDATED = 2;
-function createRegisterEventWithLowercaseECharts(method) {
-  return function(...args) {
-    if (this.isDisposed()) {
-      disposedWarning(this.id);
-      return;
-    }
-    return toLowercaseNameAndCallEventful(this, method, args);
-  };
-}
-function createRegisterEventWithLowercaseMessageCenter(method) {
-  return function(...args) {
-    return toLowercaseNameAndCallEventful(this, method, args);
-  };
-}
-function toLowercaseNameAndCallEventful(host, method, args) {
-  args[0] = args[0] && args[0].toLowerCase();
-  return Eventful_default.prototype[method].apply(host, args);
-}
-var MessageCenter = class extends Eventful_default {
-};
-var messageCenterProto = MessageCenter.prototype;
-messageCenterProto.on = createRegisterEventWithLowercaseMessageCenter("on");
-messageCenterProto.off = createRegisterEventWithLowercaseMessageCenter("off");
-var prepare;
-var prepareView;
-var updateDirectly;
-var updateMethods;
-var doConvertPixel;
-var updateStreamModes;
-var doDispatchAction;
-var flushPendingActions;
-var triggerUpdatedEvent;
-var bindRenderedEvent;
-var bindMouseEvent;
-var render;
-var renderComponents;
-var renderSeries;
-var createExtensionAPI;
-var enableConnect;
-var markStatusToUpdate;
-var applyChangedStates;
-var ECharts = class extends Eventful_default {
-  constructor(dom, theme2, opts) {
-    super(new ECEventProcessor());
-    this._chartsViews = [];
-    this._chartsMap = {};
-    this._componentsViews = [];
-    this._componentsMap = {};
-    this._pendingActions = [];
-    opts = opts || {};
-    if (isString(theme2)) {
-      theme2 = themeStorage[theme2];
-    }
-    this._dom = dom;
-    let defaultRenderer = "canvas";
-    let defaultCoarsePointer = "auto";
-    let defaultUseDirtyRect = false;
-    if (true) {
-      const root = env_default.hasGlobalWindow ? window : global;
-      defaultRenderer = root.__ECHARTS__DEFAULT__RENDERER__ || defaultRenderer;
-      defaultCoarsePointer = retrieve2(root.__ECHARTS__DEFAULT__COARSE_POINTER, defaultCoarsePointer);
-      const devUseDirtyRect = root.__ECHARTS__DEFAULT__USE_DIRTY_RECT__;
-      defaultUseDirtyRect = devUseDirtyRect == null ? defaultUseDirtyRect : devUseDirtyRect;
-    }
-    const zr = this._zr = init(dom, {
-      renderer: opts.renderer || defaultRenderer,
-      devicePixelRatio: opts.devicePixelRatio,
-      width: opts.width,
-      height: opts.height,
-      ssr: opts.ssr,
-      useDirtyRect: retrieve2(opts.useDirtyRect, defaultUseDirtyRect),
-      useCoarsePointer: retrieve2(opts.useCoarsePointer, defaultCoarsePointer),
-      pointerSize: opts.pointerSize
-    });
-    this._ssr = opts.ssr;
-    this._throttledZrFlush = throttle(bind(zr.flush, zr), 17);
-    theme2 = clone(theme2);
-    theme2 && globalBackwardCompat(theme2, true);
-    this._theme = theme2;
-    this._locale = createLocaleObject(opts.locale || SYSTEM_LANG);
-    this._coordSysMgr = new CoordinateSystem_default();
-    const api2 = this._api = createExtensionAPI(this);
-    function prioritySortFunc(a, b) {
-      return a.__prio - b.__prio;
-    }
-    sort(visualFuncs, prioritySortFunc);
-    sort(dataProcessorFuncs, prioritySortFunc);
-    this._scheduler = new Scheduler_default(this, api2, dataProcessorFuncs, visualFuncs);
-    this._messageCenter = new MessageCenter();
-    this._initEvents();
-    this.resize = bind(this.resize, this);
-    zr.animation.on("frame", this._onframe, this);
-    bindRenderedEvent(zr, this);
-    bindMouseEvent(zr, this);
-    setAsPrimitive(this);
-  }
-  _onframe() {
-    if (this._disposed) {
-      return;
-    }
-    applyChangedStates(this);
-    const scheduler = this._scheduler;
-    if (this[PENDING_UPDATE]) {
-      const silent = this[PENDING_UPDATE].silent;
-      this[IN_MAIN_PROCESS_KEY] = true;
-      try {
-        prepare(this);
-        updateMethods.update.call(this, null, this[PENDING_UPDATE].updateParams);
-      } catch (e2) {
-        this[IN_MAIN_PROCESS_KEY] = false;
-        this[PENDING_UPDATE] = null;
-        throw e2;
-      }
-      this._zr.flush();
-      this[IN_MAIN_PROCESS_KEY] = false;
-      this[PENDING_UPDATE] = null;
-      flushPendingActions.call(this, silent);
-      triggerUpdatedEvent.call(this, silent);
-    } else if (scheduler.unfinished) {
-      let remainTime = TEST_FRAME_REMAIN_TIME;
-      const ecModel = this._model;
-      const api2 = this._api;
-      scheduler.unfinished = false;
-      do {
-        const startTime = +new Date();
-        scheduler.performSeriesTasks(ecModel);
-        scheduler.performDataProcessorTasks(ecModel);
-        updateStreamModes(this, ecModel);
-        scheduler.performVisualTasks(ecModel);
-        renderSeries(this, this._model, api2, "remain", {});
-        remainTime -= +new Date() - startTime;
-      } while (remainTime > 0 && scheduler.unfinished);
-      if (!scheduler.unfinished) {
-        this._zr.flush();
-      }
-    }
-  }
-  getDom() {
-    return this._dom;
-  }
-  getId() {
-    return this.id;
-  }
-  getZr() {
-    return this._zr;
-  }
-  isSSR() {
-    return this._ssr;
-  }
-  setOption(option, notMerge, lazyUpdate) {
-    if (this[IN_MAIN_PROCESS_KEY]) {
-      if (true) {
-        error("`setOption` should not be called during main process.");
-      }
-      return;
-    }
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    let silent;
-    let replaceMerge;
-    let transitionOpt;
-    if (isObject(notMerge)) {
-      lazyUpdate = notMerge.lazyUpdate;
-      silent = notMerge.silent;
-      replaceMerge = notMerge.replaceMerge;
-      transitionOpt = notMerge.transition;
-      notMerge = notMerge.notMerge;
-    }
-    this[IN_MAIN_PROCESS_KEY] = true;
-    if (!this._model || notMerge) {
-      const optionManager = new OptionManager_default(this._api);
-      const theme2 = this._theme;
-      const ecModel = this._model = new Global_default();
-      ecModel.scheduler = this._scheduler;
-      ecModel.ssr = this._ssr;
-      ecModel.init(null, null, null, theme2, this._locale, optionManager);
-    }
-    this._model.setOption(option, {replaceMerge}, optionPreprocessorFuncs);
-    const updateParams = {
-      seriesTransition: transitionOpt,
-      optionChanged: true
+    var hasWindow = typeof window !== 'undefined';
+    var version$1 = '5.4.0';
+    var dependencies = {
+      zrender: '5.4.0'
     };
-    if (lazyUpdate) {
-      this[PENDING_UPDATE] = {
-        silent,
-        updateParams
+    var TEST_FRAME_REMAIN_TIME = 1;
+    var PRIORITY_PROCESSOR_SERIES_FILTER = 800; // Some data processors depends on the stack result dimension (to calculate data extent).
+    // So data stack stage should be in front of data processing stage.
+
+    var PRIORITY_PROCESSOR_DATASTACK = 900; // "Data filter" will block the stream, so it should be
+    // put at the begining of data processing.
+
+    var PRIORITY_PROCESSOR_FILTER = 1000;
+    var PRIORITY_PROCESSOR_DEFAULT = 2000;
+    var PRIORITY_PROCESSOR_STATISTIC = 5000;
+    var PRIORITY_VISUAL_LAYOUT = 1000;
+    var PRIORITY_VISUAL_PROGRESSIVE_LAYOUT = 1100;
+    var PRIORITY_VISUAL_GLOBAL = 2000;
+    var PRIORITY_VISUAL_CHART = 3000;
+    var PRIORITY_VISUAL_COMPONENT = 4000; // Visual property in data. Greater than `PRIORITY_VISUAL_COMPONENT` to enable to
+    // overwrite the viusal result of component (like `visualMap`)
+    // using data item specific setting (like itemStyle.xxx on data item)
+
+    var PRIORITY_VISUAL_CHART_DATA_CUSTOM = 4500; // Greater than `PRIORITY_VISUAL_CHART_DATA_CUSTOM` to enable to layout based on
+    // visual result like `symbolSize`.
+
+    var PRIORITY_VISUAL_POST_CHART_LAYOUT = 4600;
+    var PRIORITY_VISUAL_BRUSH = 5000;
+    var PRIORITY_VISUAL_ARIA = 6000;
+    var PRIORITY_VISUAL_DECAL = 7000;
+    var PRIORITY = {
+      PROCESSOR: {
+        FILTER: PRIORITY_PROCESSOR_FILTER,
+        SERIES_FILTER: PRIORITY_PROCESSOR_SERIES_FILTER,
+        STATISTIC: PRIORITY_PROCESSOR_STATISTIC
+      },
+      VISUAL: {
+        LAYOUT: PRIORITY_VISUAL_LAYOUT,
+        PROGRESSIVE_LAYOUT: PRIORITY_VISUAL_PROGRESSIVE_LAYOUT,
+        GLOBAL: PRIORITY_VISUAL_GLOBAL,
+        CHART: PRIORITY_VISUAL_CHART,
+        POST_CHART_LAYOUT: PRIORITY_VISUAL_POST_CHART_LAYOUT,
+        COMPONENT: PRIORITY_VISUAL_COMPONENT,
+        BRUSH: PRIORITY_VISUAL_BRUSH,
+        CHART_ITEM: PRIORITY_VISUAL_CHART_DATA_CUSTOM,
+        ARIA: PRIORITY_VISUAL_ARIA,
+        DECAL: PRIORITY_VISUAL_DECAL
+      }
+    }; // Main process have three entries: `setOption`, `dispatchAction` and `resize`,
+    // where they must not be invoked nestedly, except the only case: invoke
+    // dispatchAction with updateMethod "none" in main process.
+    // This flag is used to carry out this rule.
+    // All events will be triggered out side main process (i.e. when !this[IN_MAIN_PROCESS]).
+
+    var IN_MAIN_PROCESS_KEY = '__flagInMainProcess';
+    var PENDING_UPDATE = '__pendingUpdate';
+    var STATUS_NEEDS_UPDATE_KEY = '__needsUpdateStatus';
+    var ACTION_REG = /^[a-zA-Z0-9_]+$/;
+    var CONNECT_STATUS_KEY = '__connectUpdateStatus';
+    var CONNECT_STATUS_PENDING = 0;
+    var CONNECT_STATUS_UPDATING = 1;
+    var CONNECT_STATUS_UPDATED = 2;
+
+    function createRegisterEventWithLowercaseECharts(method) {
+      return function () {
+        var args = [];
+
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+
+        if (this.isDisposed()) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        return toLowercaseNameAndCallEventful(this, method, args);
       };
-      this[IN_MAIN_PROCESS_KEY] = false;
-      this.getZr().wakeUp();
-    } else {
-      try {
-        prepare(this);
-        updateMethods.update.call(this, null, updateParams);
-      } catch (e2) {
-        this[PENDING_UPDATE] = null;
-        this[IN_MAIN_PROCESS_KEY] = false;
-        throw e2;
-      }
-      if (!this._ssr) {
-        this._zr.flush();
-      }
-      this[PENDING_UPDATE] = null;
-      this[IN_MAIN_PROCESS_KEY] = false;
-      flushPendingActions.call(this, silent);
-      triggerUpdatedEvent.call(this, silent);
     }
-  }
-  setTheme() {
-    deprecateLog("ECharts#setTheme() is DEPRECATED in ECharts 3.0");
-  }
-  getModel() {
-    return this._model;
-  }
-  getOption() {
-    return this._model && this._model.getOption();
-  }
-  getWidth() {
-    return this._zr.getWidth();
-  }
-  getHeight() {
-    return this._zr.getHeight();
-  }
-  getDevicePixelRatio() {
-    return this._zr.painter.dpr || env_default.hasGlobalWindow && window.devicePixelRatio || 1;
-  }
-  getRenderedCanvas(opts) {
-    if (true) {
-      deprecateReplaceLog("getRenderedCanvas", "renderToCanvas");
-    }
-    return this.renderToCanvas(opts);
-  }
-  renderToCanvas(opts) {
-    opts = opts || {};
-    const painter = this._zr.painter;
-    if (true) {
-      if (painter.type !== "canvas") {
-        throw new Error("renderToCanvas can only be used in the canvas renderer.");
-      }
-    }
-    return painter.getRenderedCanvas({
-      backgroundColor: opts.backgroundColor || this._model.get("backgroundColor"),
-      pixelRatio: opts.pixelRatio || this.getDevicePixelRatio()
-    });
-  }
-  renderToSVGString(opts) {
-    opts = opts || {};
-    const painter = this._zr.painter;
-    if (true) {
-      if (painter.type !== "svg") {
-        throw new Error("renderToSVGString can only be used in the svg renderer.");
-      }
-    }
-    return painter.renderToString({
-      useViewBox: opts.useViewBox
-    });
-  }
-  getSvgDataURL() {
-    if (!env_default.svgSupported) {
-      return;
-    }
-    const zr = this._zr;
-    const list = zr.storage.getDisplayList();
-    each(list, function(el) {
-      el.stopAnimation(null, true);
-    });
-    return zr.painter.toDataURL();
-  }
-  getDataURL(opts) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    opts = opts || {};
-    const excludeComponents = opts.excludeComponents;
-    const ecModel = this._model;
-    const excludesComponentViews = [];
-    const self2 = this;
-    each(excludeComponents, function(componentType) {
-      ecModel.eachComponent({
-        mainType: componentType
-      }, function(component) {
-        const view = self2._componentsMap[component.__viewId];
-        if (!view.group.ignore) {
-          excludesComponentViews.push(view);
-          view.group.ignore = true;
+
+    function createRegisterEventWithLowercaseMessageCenter(method) {
+      return function () {
+        var args = [];
+
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
         }
-      });
-    });
-    const url = this._zr.painter.getType() === "svg" ? this.getSvgDataURL() : this.renderToCanvas(opts).toDataURL("image/" + (opts && opts.type || "png"));
-    each(excludesComponentViews, function(view) {
-      view.group.ignore = false;
-    });
-    return url;
-  }
-  getConnectedDataURL(opts) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
+
+        return toLowercaseNameAndCallEventful(this, method, args);
+      };
     }
-    const isSvg = opts.type === "svg";
-    const groupId = this.group;
-    const mathMin12 = Math.min;
-    const mathMax12 = Math.max;
-    const MAX_NUMBER = Infinity;
-    if (connectedGroups[groupId]) {
-      let left = MAX_NUMBER;
-      let top = MAX_NUMBER;
-      let right = -MAX_NUMBER;
-      let bottom = -MAX_NUMBER;
-      const canvasList = [];
-      const dpr2 = opts && opts.pixelRatio || this.getDevicePixelRatio();
-      each(instances2, function(chart, id) {
-        if (chart.group === groupId) {
-          const canvas = isSvg ? chart.getZr().painter.getSvgDom().innerHTML : chart.renderToCanvas(clone(opts));
-          const boundingRect = chart.getDom().getBoundingClientRect();
-          left = mathMin12(boundingRect.left, left);
-          top = mathMin12(boundingRect.top, top);
-          right = mathMax12(boundingRect.right, right);
-          bottom = mathMax12(boundingRect.bottom, bottom);
-          canvasList.push({
-            dom: canvas,
-            left: boundingRect.left,
-            top: boundingRect.top
-          });
+
+    function toLowercaseNameAndCallEventful(host, method, args) {
+      // `args[0]` is event name. Event name is all lowercase.
+      args[0] = args[0] && args[0].toLowerCase();
+      return Eventful.prototype[method].apply(host, args);
+    }
+
+    var MessageCenter =
+    /** @class */
+    function (_super) {
+      __extends(MessageCenter, _super);
+
+      function MessageCenter() {
+        return _super !== null && _super.apply(this, arguments) || this;
+      }
+
+      return MessageCenter;
+    }(Eventful);
+
+    var messageCenterProto = MessageCenter.prototype;
+    messageCenterProto.on = createRegisterEventWithLowercaseMessageCenter('on');
+    messageCenterProto.off = createRegisterEventWithLowercaseMessageCenter('off'); // ---------------------------------------
+    // Internal method names for class ECharts
+    // ---------------------------------------
+
+    var prepare;
+    var prepareView;
+    var updateDirectly;
+    var updateMethods;
+    var doConvertPixel;
+    var updateStreamModes;
+    var doDispatchAction;
+    var flushPendingActions;
+    var triggerUpdatedEvent;
+    var bindRenderedEvent;
+    var bindMouseEvent;
+    var render;
+    var renderComponents;
+    var renderSeries;
+    var createExtensionAPI;
+    var enableConnect;
+    var markStatusToUpdate;
+    var applyChangedStates;
+
+    var ECharts =
+    /** @class */
+    function (_super) {
+      __extends(ECharts, _super);
+
+      function ECharts(dom, // Theme name or themeOption.
+      theme, opts) {
+        var _this = _super.call(this, new ECEventProcessor()) || this;
+
+        _this._chartsViews = [];
+        _this._chartsMap = {};
+        _this._componentsViews = [];
+        _this._componentsMap = {}; // Can't dispatch action during rendering procedure
+
+        _this._pendingActions = [];
+        opts = opts || {}; // Get theme by name
+
+        if (isString(theme)) {
+          theme = themeStorage[theme];
         }
-      });
-      left *= dpr2;
-      top *= dpr2;
-      right *= dpr2;
-      bottom *= dpr2;
-      const width = right - left;
-      const height = bottom - top;
-      const targetCanvas = platformApi.createCanvas();
-      const zr = init(targetCanvas, {
-        renderer: isSvg ? "svg" : "canvas"
-      });
-      zr.resize({
-        width,
-        height
-      });
-      if (isSvg) {
-        let content = "";
-        each(canvasList, function(item) {
-          const x = item.left - left;
-          const y = item.top - top;
-          content += '<g transform="translate(' + x + "," + y + ')">' + item.dom + "</g>";
+
+        _this._dom = dom;
+        var defaultRenderer = 'canvas';
+        var defaultCoarsePointer = 'auto';
+        var defaultUseDirtyRect = false;
+
+        if ("development" !== 'production') {
+          var root =
+          /* eslint-disable-next-line */
+          hasWindow ? window : global;
+          defaultRenderer = root.__ECHARTS__DEFAULT__RENDERER__ || defaultRenderer;
+          defaultCoarsePointer = retrieve2(root.__ECHARTS__DEFAULT__COARSE_POINTER, defaultCoarsePointer);
+          var devUseDirtyRect = root.__ECHARTS__DEFAULT__USE_DIRTY_RECT__;
+          defaultUseDirtyRect = devUseDirtyRect == null ? defaultUseDirtyRect : devUseDirtyRect;
+        }
+
+        var zr = _this._zr = init(dom, {
+          renderer: opts.renderer || defaultRenderer,
+          devicePixelRatio: opts.devicePixelRatio,
+          width: opts.width,
+          height: opts.height,
+          ssr: opts.ssr,
+          useDirtyRect: retrieve2(opts.useDirtyRect, defaultUseDirtyRect),
+          useCoarsePointer: retrieve2(opts.useCoarsePointer, defaultCoarsePointer),
+          pointerSize: opts.pointerSize
         });
-        zr.painter.getSvgRoot().innerHTML = content;
-        if (opts.connectedBackgroundColor) {
-          zr.painter.setBackgroundColor(opts.connectedBackgroundColor);
+        _this._ssr = opts.ssr; // Expect 60 fps.
+
+        _this._throttledZrFlush = throttle(bind(zr.flush, zr), 17);
+        theme = clone(theme);
+        theme && globalBackwardCompat(theme, true);
+        _this._theme = theme;
+        _this._locale = createLocaleObject(opts.locale || SYSTEM_LANG);
+        _this._coordSysMgr = new CoordinateSystemManager();
+        var api = _this._api = createExtensionAPI(_this); // Sort on demand
+
+        function prioritySortFunc(a, b) {
+          return a.__prio - b.__prio;
         }
-        zr.refreshImmediately();
-        return zr.painter.toDataURL();
-      } else {
-        if (opts.connectedBackgroundColor) {
-          zr.add(new Rect_default({
-            shape: {
-              x: 0,
-              y: 0,
-              width,
-              height
-            },
-            style: {
-              fill: opts.connectedBackgroundColor
-            }
-          }));
-        }
-        each(canvasList, function(item) {
-          const img = new Image_default({
-            style: {
-              x: item.left * dpr2 - left,
-              y: item.top * dpr2 - top,
-              image: item.dom
-            }
-          });
-          zr.add(img);
-        });
-        zr.refreshImmediately();
-        return targetCanvas.toDataURL("image/" + (opts && opts.type || "png"));
+
+        sort(visualFuncs, prioritySortFunc);
+        sort(dataProcessorFuncs, prioritySortFunc);
+        _this._scheduler = new Scheduler(_this, api, dataProcessorFuncs, visualFuncs);
+        _this._messageCenter = new MessageCenter(); // Init mouse events
+
+        _this._initEvents(); // In case some people write `window.onresize = chart.resize`
+
+
+        _this.resize = bind(_this.resize, _this);
+        zr.animation.on('frame', _this._onframe, _this);
+        bindRenderedEvent(zr, _this);
+        bindMouseEvent(zr, _this); // ECharts instance can be used as value.
+
+        setAsPrimitive(_this);
+        return _this;
       }
-    } else {
-      return this.getDataURL(opts);
-    }
-  }
-  convertToPixel(finder, value) {
-    return doConvertPixel(this, "convertToPixel", finder, value);
-  }
-  convertFromPixel(finder, value) {
-    return doConvertPixel(this, "convertFromPixel", finder, value);
-  }
-  containPixel(finder, value) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    const ecModel = this._model;
-    let result;
-    const findResult = parseFinder(ecModel, finder);
-    each(findResult, function(models, key) {
-      key.indexOf("Models") >= 0 && each(models, function(model) {
-        const coordSys = model.coordinateSystem;
-        if (coordSys && coordSys.containPoint) {
-          result = result || !!coordSys.containPoint(value);
-        } else if (key === "seriesModels") {
-          const view = this._chartsMap[model.__viewId];
-          if (view && view.containPoint) {
-            result = result || view.containPoint(value, model);
-          } else {
-            if (true) {
-              warn(key + ": " + (view ? "The found component do not support containPoint." : "No view mapping to the found component."));
-            }
-          }
-        } else {
-          if (true) {
-            warn(key + ": containPoint is not supported");
-          }
+
+      ECharts.prototype._onframe = function () {
+        if (this._disposed) {
+          return;
         }
-      }, this);
-    }, this);
-    return !!result;
-  }
-  getVisual(finder, visualType) {
-    const ecModel = this._model;
-    const parsedFinder = parseFinder(ecModel, finder, {
-      defaultMainType: "series"
-    });
-    const seriesModel = parsedFinder.seriesModel;
-    if (true) {
-      if (!seriesModel) {
-        warn("There is no specified series model");
-      }
-    }
-    const data = seriesModel.getData();
-    const dataIndexInside = parsedFinder.hasOwnProperty("dataIndexInside") ? parsedFinder.dataIndexInside : parsedFinder.hasOwnProperty("dataIndex") ? data.indexOfRawIndex(parsedFinder.dataIndex) : null;
-    return dataIndexInside != null ? getItemVisualFromData(data, dataIndexInside, visualType) : getVisualFromData(data, visualType);
-  }
-  getViewOfComponentModel(componentModel) {
-    return this._componentsMap[componentModel.__viewId];
-  }
-  getViewOfSeriesModel(seriesModel) {
-    return this._chartsMap[seriesModel.__viewId];
-  }
-  _initEvents() {
-    each(MOUSE_EVENT_NAMES, (eveName) => {
-      const handler = (e2) => {
-        const ecModel = this.getModel();
-        const el = e2.target;
-        let params;
-        const isGlobalOut = eveName === "globalout";
-        if (isGlobalOut) {
-          params = {};
-        } else {
-          el && findEventDispatcher(el, (parent) => {
-            const ecData = getECData(parent);
-            if (ecData && ecData.dataIndex != null) {
-              const dataModel = ecData.dataModel || ecModel.getSeriesByIndex(ecData.seriesIndex);
-              params = dataModel && dataModel.getDataParams(ecData.dataIndex, ecData.dataType) || {};
-              return true;
-            } else if (ecData.eventData) {
-              params = extend({}, ecData.eventData);
-              return true;
-            }
-          }, true);
+
+        applyChangedStates(this);
+        var scheduler = this._scheduler; // Lazy update
+
+        if (this[PENDING_UPDATE]) {
+          var silent = this[PENDING_UPDATE].silent;
+          this[IN_MAIN_PROCESS_KEY] = true;
+
+          try {
+            prepare(this);
+            updateMethods.update.call(this, null, this[PENDING_UPDATE].updateParams);
+          } catch (e) {
+            this[IN_MAIN_PROCESS_KEY] = false;
+            this[PENDING_UPDATE] = null;
+            throw e;
+          } // At present, in each frame, zrender performs:
+          //   (1) animation step forward.
+          //   (2) trigger('frame') (where this `_onframe` is called)
+          //   (3) zrender flush (render).
+          // If we do nothing here, since we use `setToFinal: true`, the step (3) above
+          // will render the final state of the elements before the real animation started.
+
+
+          this._zr.flush();
+
+          this[IN_MAIN_PROCESS_KEY] = false;
+          this[PENDING_UPDATE] = null;
+          flushPendingActions.call(this, silent);
+          triggerUpdatedEvent.call(this, silent);
+        } // Avoid do both lazy update and progress in one frame.
+        else if (scheduler.unfinished) {
+            // Stream progress.
+            var remainTime = TEST_FRAME_REMAIN_TIME;
+            var ecModel = this._model;
+            var api = this._api;
+            scheduler.unfinished = false;
+
+            do {
+              var startTime = +new Date();
+              scheduler.performSeriesTasks(ecModel); // Currently dataProcessorFuncs do not check threshold.
+
+              scheduler.performDataProcessorTasks(ecModel);
+              updateStreamModes(this, ecModel); // Do not update coordinate system here. Because that coord system update in
+              // each frame is not a good user experience. So we follow the rule that
+              // the extent of the coordinate system is determin in the first frame (the
+              // frame is executed immedietely after task reset.
+              // this._coordSysMgr.update(ecModel, api);
+              // console.log('--- ec frame visual ---', remainTime);
+
+              scheduler.performVisualTasks(ecModel);
+              renderSeries(this, this._model, api, 'remain', {});
+              remainTime -= +new Date() - startTime;
+            } while (remainTime > 0 && scheduler.unfinished); // Call flush explicitly for trigger finished event.
+
+
+            if (!scheduler.unfinished) {
+              this._zr.flush();
+            } // Else, zr flushing be ensue within the same frame,
+            // because zr flushing is after onframe event.
+
+          }
+      };
+
+      ECharts.prototype.getDom = function () {
+        return this._dom;
+      };
+
+      ECharts.prototype.getId = function () {
+        return this.id;
+      };
+
+      ECharts.prototype.getZr = function () {
+        return this._zr;
+      };
+
+      ECharts.prototype.isSSR = function () {
+        return this._ssr;
+      };
+      /* eslint-disable-next-line */
+
+
+      ECharts.prototype.setOption = function (option, notMerge, lazyUpdate) {
+        if (this[IN_MAIN_PROCESS_KEY]) {
+          if ("development" !== 'production') {
+            error('`setOption` should not be called during main process.');
+          }
+
+          return;
         }
-        if (params) {
-          let componentType = params.componentType;
-          let componentIndex = params.componentIndex;
-          if (componentType === "markLine" || componentType === "markPoint" || componentType === "markArea") {
-            componentType = "series";
-            componentIndex = params.seriesIndex;
-          }
-          const model = componentType && componentIndex != null && ecModel.getComponent(componentType, componentIndex);
-          const view = model && this[model.mainType === "series" ? "_chartsMap" : "_componentsMap"][model.__viewId];
-          if (true) {
-            if (!isGlobalOut && !(model && view)) {
-              warn("model or view can not be found by params");
-            }
-          }
-          params.event = e2;
-          params.type = eveName;
-          this._$eventProcessor.eventInfo = {
-            targetEl: el,
-            packedEvent: params,
-            model,
-            view
+
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        var silent;
+        var replaceMerge;
+        var transitionOpt;
+
+        if (isObject(notMerge)) {
+          lazyUpdate = notMerge.lazyUpdate;
+          silent = notMerge.silent;
+          replaceMerge = notMerge.replaceMerge;
+          transitionOpt = notMerge.transition;
+          notMerge = notMerge.notMerge;
+        }
+
+        this[IN_MAIN_PROCESS_KEY] = true;
+
+        if (!this._model || notMerge) {
+          var optionManager = new OptionManager(this._api);
+          var theme = this._theme;
+          var ecModel = this._model = new GlobalModel();
+          ecModel.scheduler = this._scheduler;
+          ecModel.ssr = this._ssr;
+          ecModel.init(null, null, null, theme, this._locale, optionManager);
+        }
+
+        this._model.setOption(option, {
+          replaceMerge: replaceMerge
+        }, optionPreprocessorFuncs);
+
+        var updateParams = {
+          seriesTransition: transitionOpt,
+          optionChanged: true
+        };
+
+        if (lazyUpdate) {
+          this[PENDING_UPDATE] = {
+            silent: silent,
+            updateParams: updateParams
           };
-          this.trigger(eveName, params);
+          this[IN_MAIN_PROCESS_KEY] = false; // `setOption(option, {lazyMode: true})` may be called when zrender has been slept.
+          // It should wake it up to make sure zrender start to render at the next frame.
+
+          this.getZr().wakeUp();
+        } else {
+          try {
+            prepare(this);
+            updateMethods.update.call(this, null, updateParams);
+          } catch (e) {
+            this[PENDING_UPDATE] = null;
+            this[IN_MAIN_PROCESS_KEY] = false;
+            throw e;
+          } // Ensure zr refresh sychronously, and then pixel in canvas can be
+          // fetched after `setOption`.
+
+
+          if (!this._ssr) {
+            // not use flush when using ssr mode.
+            this._zr.flush();
+          }
+
+          this[PENDING_UPDATE] = null;
+          this[IN_MAIN_PROCESS_KEY] = false;
+          flushPendingActions.call(this, silent);
+          triggerUpdatedEvent.call(this, silent);
         }
       };
-      handler.zrEventfulCallAtLast = true;
-      this._zr.on(eveName, handler, this);
-    });
-    each(eventActionMap, (actionType, eventType) => {
-      this._messageCenter.on(eventType, function(event) {
-        this.trigger(eventType, event);
-      }, this);
-    });
-    each(["selectchanged"], (eventType) => {
-      this._messageCenter.on(eventType, function(event) {
-        this.trigger(eventType, event);
-      }, this);
-    });
-    handleLegacySelectEvents(this._messageCenter, this, this._api);
-  }
-  isDisposed() {
-    return this._disposed;
-  }
-  clear() {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    this.setOption({series: []}, true);
-  }
-  dispose() {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    this._disposed = true;
-    const dom = this.getDom();
-    if (dom) {
-      setAttribute(this.getDom(), DOM_ATTRIBUTE_KEY, "");
-    }
-    const chart = this;
-    const api2 = chart._api;
-    const ecModel = chart._model;
-    each(chart._componentsViews, function(component) {
-      component.dispose(ecModel, api2);
-    });
-    each(chart._chartsViews, function(chart2) {
-      chart2.dispose(ecModel, api2);
-    });
-    chart._zr.dispose();
-    chart._dom = chart._model = chart._chartsMap = chart._componentsMap = chart._chartsViews = chart._componentsViews = chart._scheduler = chart._api = chart._zr = chart._throttledZrFlush = chart._theme = chart._coordSysMgr = chart._messageCenter = null;
-    delete instances2[chart.id];
-  }
-  resize(opts) {
-    if (this[IN_MAIN_PROCESS_KEY]) {
-      if (true) {
-        error("`resize` should not be called during main process.");
-      }
-      return;
-    }
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    this._zr.resize(opts);
-    const ecModel = this._model;
-    this._loadingFX && this._loadingFX.resize();
-    if (!ecModel) {
-      return;
-    }
-    let needPrepare = ecModel.resetOption("media");
-    let silent = opts && opts.silent;
-    if (this[PENDING_UPDATE]) {
-      if (silent == null) {
-        silent = this[PENDING_UPDATE].silent;
-      }
-      needPrepare = true;
-      this[PENDING_UPDATE] = null;
-    }
-    this[IN_MAIN_PROCESS_KEY] = true;
-    try {
-      needPrepare && prepare(this);
-      updateMethods.update.call(this, {
-        type: "resize",
-        animation: extend({
-          duration: 0
-        }, opts && opts.animation)
-      });
-    } catch (e2) {
-      this[IN_MAIN_PROCESS_KEY] = false;
-      throw e2;
-    }
-    this[IN_MAIN_PROCESS_KEY] = false;
-    flushPendingActions.call(this, silent);
-    triggerUpdatedEvent.call(this, silent);
-  }
-  showLoading(name, cfg) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    if (isObject(name)) {
-      cfg = name;
-      name = "";
-    }
-    name = name || "default";
-    this.hideLoading();
-    if (!loadingEffects[name]) {
-      if (true) {
-        warn("Loading effects " + name + " not exists.");
-      }
-      return;
-    }
-    const el = loadingEffects[name](this._api, cfg);
-    const zr = this._zr;
-    this._loadingFX = el;
-    zr.add(el);
-  }
-  hideLoading() {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    this._loadingFX && this._zr.remove(this._loadingFX);
-    this._loadingFX = null;
-  }
-  makeActionFromEvent(eventObj) {
-    const payload = extend({}, eventObj);
-    payload.type = eventActionMap[eventObj.type];
-    return payload;
-  }
-  dispatchAction(payload, opt) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    if (!isObject(opt)) {
-      opt = {silent: !!opt};
-    }
-    if (!actions[payload.type]) {
-      return;
-    }
-    if (!this._model) {
-      return;
-    }
-    if (this[IN_MAIN_PROCESS_KEY]) {
-      this._pendingActions.push(payload);
-      return;
-    }
-    const silent = opt.silent;
-    doDispatchAction.call(this, payload, silent);
-    const flush = opt.flush;
-    if (flush) {
-      this._zr.flush();
-    } else if (flush !== false && env_default.browser.weChat) {
-      this._throttledZrFlush();
-    }
-    flushPendingActions.call(this, silent);
-    triggerUpdatedEvent.call(this, silent);
-  }
-  updateLabelLayout() {
-    lifecycle_default.trigger("series:layoutlabels", this._model, this._api, {
-      updatedSeries: []
-    });
-  }
-  appendData(params) {
-    if (this._disposed) {
-      disposedWarning(this.id);
-      return;
-    }
-    const seriesIndex = params.seriesIndex;
-    const ecModel = this.getModel();
-    const seriesModel = ecModel.getSeriesByIndex(seriesIndex);
-    if (true) {
-      assert(params.data && seriesModel);
-    }
-    seriesModel.appendData(params);
-    this._scheduler.unfinished = true;
-    this.getZr().wakeUp();
-  }
-};
-PENDING_UPDATE, IN_MAIN_PROCESS_KEY, CONNECT_STATUS_KEY, STATUS_NEEDS_UPDATE_KEY;
-ECharts.internalField = function() {
-  prepare = function(ecIns) {
-    const scheduler = ecIns._scheduler;
-    scheduler.restorePipelines(ecIns._model);
-    scheduler.prepareStageTasks();
-    prepareView(ecIns, true);
-    prepareView(ecIns, false);
-    scheduler.plan();
-  };
-  prepareView = function(ecIns, isComponent) {
-    const ecModel = ecIns._model;
-    const scheduler = ecIns._scheduler;
-    const viewList = isComponent ? ecIns._componentsViews : ecIns._chartsViews;
-    const viewMap = isComponent ? ecIns._componentsMap : ecIns._chartsMap;
-    const zr = ecIns._zr;
-    const api2 = ecIns._api;
-    for (let i = 0; i < viewList.length; i++) {
-      viewList[i].__alive = false;
-    }
-    isComponent ? ecModel.eachComponent(function(componentType, model) {
-      componentType !== "series" && doPrepare(model);
-    }) : ecModel.eachSeries(doPrepare);
-    function doPrepare(model) {
-      const requireNewView = model.__requireNewView;
-      model.__requireNewView = false;
-      const viewId = "_ec_" + model.id + "_" + model.type;
-      let view = !requireNewView && viewMap[viewId];
-      if (!view) {
-        const classType = parseClassType(model.type);
-        const Clazz = isComponent ? Component_default2.getClass(classType.main, classType.sub) : Chart_default.getClass(classType.sub);
-        if (true) {
-          assert(Clazz, classType.sub + " does not exist.");
-        }
-        view = new Clazz();
-        view.init(ecModel, api2);
-        viewMap[viewId] = view;
-        viewList.push(view);
-        zr.add(view.group);
-      }
-      model.__viewId = view.__id = viewId;
-      view.__alive = true;
-      view.__model = model;
-      view.group.__ecComponentInfo = {
-        mainType: model.mainType,
-        index: model.componentIndex
+      /**
+       * @deprecated
+       */
+
+
+      ECharts.prototype.setTheme = function () {
+        deprecateLog('ECharts#setTheme() is DEPRECATED in ECharts 3.0');
+      }; // We don't want developers to use getModel directly.
+
+
+      ECharts.prototype.getModel = function () {
+        return this._model;
       };
-      !isComponent && scheduler.prepareView(view, model, ecModel, api2);
-    }
-    for (let i = 0; i < viewList.length; ) {
-      const view = viewList[i];
-      if (!view.__alive) {
-        !isComponent && view.renderTask.dispose();
-        zr.remove(view.group);
-        view.dispose(ecModel, api2);
-        viewList.splice(i, 1);
-        if (viewMap[view.__id] === view) {
-          delete viewMap[view.__id];
+
+      ECharts.prototype.getOption = function () {
+        return this._model && this._model.getOption();
+      };
+
+      ECharts.prototype.getWidth = function () {
+        return this._zr.getWidth();
+      };
+
+      ECharts.prototype.getHeight = function () {
+        return this._zr.getHeight();
+      };
+
+      ECharts.prototype.getDevicePixelRatio = function () {
+        return this._zr.painter.dpr
+        /* eslint-disable-next-line */
+        || hasWindow && window.devicePixelRatio || 1;
+      };
+      /**
+       * Get canvas which has all thing rendered
+       * @deprecated Use renderToCanvas instead.
+       */
+
+
+      ECharts.prototype.getRenderedCanvas = function (opts) {
+        if ("development" !== 'production') {
+          deprecateReplaceLog('getRenderedCanvas', 'renderToCanvas');
         }
-        view.__id = view.group.__ecComponentInfo = null;
-      } else {
-        i++;
-      }
-    }
-  };
-  updateDirectly = function(ecIns, method, payload, mainType, subType) {
-    const ecModel = ecIns._model;
-    ecModel.setUpdatePayload(payload);
-    if (!mainType) {
-      each([].concat(ecIns._componentsViews).concat(ecIns._chartsViews), callView);
-      return;
-    }
-    const query = {};
-    query[mainType + "Id"] = payload[mainType + "Id"];
-    query[mainType + "Index"] = payload[mainType + "Index"];
-    query[mainType + "Name"] = payload[mainType + "Name"];
-    const condition = {mainType, query};
-    subType && (condition.subType = subType);
-    const excludeSeriesId = payload.excludeSeriesId;
-    let excludeSeriesIdMap;
-    if (excludeSeriesId != null) {
-      excludeSeriesIdMap = createHashMap();
-      each(normalizeToArray(excludeSeriesId), (id) => {
-        const modelId = convertOptionIdName(id, null);
-        if (modelId != null) {
-          excludeSeriesIdMap.set(modelId, true);
+
+        return this.renderToCanvas(opts);
+      };
+
+      ECharts.prototype.renderToCanvas = function (opts) {
+        opts = opts || {};
+        var painter = this._zr.painter;
+
+        if ("development" !== 'production') {
+          if (painter.type !== 'canvas') {
+            throw new Error('renderToCanvas can only be used in the canvas renderer.');
+          }
         }
-      });
-    }
-    ecModel && ecModel.eachComponent(condition, function(model) {
-      const isExcluded = excludeSeriesIdMap && excludeSeriesIdMap.get(model.id) != null;
-      if (isExcluded) {
-        return;
-      }
-      ;
-      if (isHighDownPayload(payload)) {
-        if (model instanceof Series_default) {
-          if (payload.type === HIGHLIGHT_ACTION_TYPE && !payload.notBlur && !model.get(["emphasis", "disabled"])) {
-            blurSeriesFromHighlightPayload(model, payload, ecIns._api);
+
+        return painter.getRenderedCanvas({
+          backgroundColor: opts.backgroundColor || this._model.get('backgroundColor'),
+          pixelRatio: opts.pixelRatio || this.getDevicePixelRatio()
+        });
+      };
+
+      ECharts.prototype.renderToSVGString = function (opts) {
+        opts = opts || {};
+        var painter = this._zr.painter;
+
+        if ("development" !== 'production') {
+          if (painter.type !== 'svg') {
+            throw new Error('renderToSVGString can only be used in the svg renderer.');
+          }
+        }
+
+        return painter.renderToString({
+          useViewBox: opts.useViewBox
+        });
+      };
+      /**
+       * Get svg data url
+       */
+
+
+      ECharts.prototype.getSvgDataURL = function () {
+        if (!env.svgSupported) {
+          return;
+        }
+
+        var zr = this._zr;
+        var list = zr.storage.getDisplayList(); // Stop animations
+
+        each(list, function (el) {
+          el.stopAnimation(null, true);
+        });
+        return zr.painter.toDataURL();
+      };
+
+      ECharts.prototype.getDataURL = function (opts) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        opts = opts || {};
+        var excludeComponents = opts.excludeComponents;
+        var ecModel = this._model;
+        var excludesComponentViews = [];
+        var self = this;
+        each(excludeComponents, function (componentType) {
+          ecModel.eachComponent({
+            mainType: componentType
+          }, function (component) {
+            var view = self._componentsMap[component.__viewId];
+
+            if (!view.group.ignore) {
+              excludesComponentViews.push(view);
+              view.group.ignore = true;
+            }
+          });
+        });
+        var url = this._zr.painter.getType() === 'svg' ? this.getSvgDataURL() : this.renderToCanvas(opts).toDataURL('image/' + (opts && opts.type || 'png'));
+        each(excludesComponentViews, function (view) {
+          view.group.ignore = false;
+        });
+        return url;
+      };
+
+      ECharts.prototype.getConnectedDataURL = function (opts) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        var isSvg = opts.type === 'svg';
+        var groupId = this.group;
+        var mathMin = Math.min;
+        var mathMax = Math.max;
+        var MAX_NUMBER = Infinity;
+
+        if (connectedGroups[groupId]) {
+          var left_1 = MAX_NUMBER;
+          var top_1 = MAX_NUMBER;
+          var right_1 = -MAX_NUMBER;
+          var bottom_1 = -MAX_NUMBER;
+          var canvasList_1 = [];
+          var dpr_1 = opts && opts.pixelRatio || this.getDevicePixelRatio();
+          each(instances$1, function (chart, id) {
+            if (chart.group === groupId) {
+              var canvas = isSvg ? chart.getZr().painter.getSvgDom().innerHTML : chart.renderToCanvas(clone(opts));
+              var boundingRect = chart.getDom().getBoundingClientRect();
+              left_1 = mathMin(boundingRect.left, left_1);
+              top_1 = mathMin(boundingRect.top, top_1);
+              right_1 = mathMax(boundingRect.right, right_1);
+              bottom_1 = mathMax(boundingRect.bottom, bottom_1);
+              canvasList_1.push({
+                dom: canvas,
+                left: boundingRect.left,
+                top: boundingRect.top
+              });
+            }
+          });
+          left_1 *= dpr_1;
+          top_1 *= dpr_1;
+          right_1 *= dpr_1;
+          bottom_1 *= dpr_1;
+          var width = right_1 - left_1;
+          var height = bottom_1 - top_1;
+          var targetCanvas = platformApi.createCanvas();
+          var zr_1 = init(targetCanvas, {
+            renderer: isSvg ? 'svg' : 'canvas'
+          });
+          zr_1.resize({
+            width: width,
+            height: height
+          });
+
+          if (isSvg) {
+            var content_1 = '';
+            each(canvasList_1, function (item) {
+              var x = item.left - left_1;
+              var y = item.top - top_1;
+              content_1 += '<g transform="translate(' + x + ',' + y + ')">' + item.dom + '</g>';
+            });
+            zr_1.painter.getSvgRoot().innerHTML = content_1;
+
+            if (opts.connectedBackgroundColor) {
+              zr_1.painter.setBackgroundColor(opts.connectedBackgroundColor);
+            }
+
+            zr_1.refreshImmediately();
+            return zr_1.painter.toDataURL();
+          } else {
+            // Background between the charts
+            if (opts.connectedBackgroundColor) {
+              zr_1.add(new Rect({
+                shape: {
+                  x: 0,
+                  y: 0,
+                  width: width,
+                  height: height
+                },
+                style: {
+                  fill: opts.connectedBackgroundColor
+                }
+              }));
+            }
+
+            each(canvasList_1, function (item) {
+              var img = new ZRImage({
+                style: {
+                  x: item.left * dpr_1 - left_1,
+                  y: item.top * dpr_1 - top_1,
+                  image: item.dom
+                }
+              });
+              zr_1.add(img);
+            });
+            zr_1.refreshImmediately();
+            return targetCanvas.toDataURL('image/' + (opts && opts.type || 'png'));
           }
         } else {
-          const {focusSelf, dispatchers} = findComponentHighDownDispatchers(model.mainType, model.componentIndex, payload.name, ecIns._api);
-          if (payload.type === HIGHLIGHT_ACTION_TYPE && focusSelf && !payload.notBlur) {
-            blurComponent(model.mainType, model.componentIndex, ecIns._api);
+          return this.getDataURL(opts);
+        }
+      };
+
+      ECharts.prototype.convertToPixel = function (finder, value) {
+        return doConvertPixel(this, 'convertToPixel', finder, value);
+      };
+
+      ECharts.prototype.convertFromPixel = function (finder, value) {
+        return doConvertPixel(this, 'convertFromPixel', finder, value);
+      };
+      /**
+       * Is the specified coordinate systems or components contain the given pixel point.
+       * @param {Array|number} value
+       * @return {boolean} result
+       */
+
+
+      ECharts.prototype.containPixel = function (finder, value) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        var ecModel = this._model;
+        var result;
+        var findResult = parseFinder(ecModel, finder);
+        each(findResult, function (models, key) {
+          key.indexOf('Models') >= 0 && each(models, function (model) {
+            var coordSys = model.coordinateSystem;
+
+            if (coordSys && coordSys.containPoint) {
+              result = result || !!coordSys.containPoint(value);
+            } else if (key === 'seriesModels') {
+              var view = this._chartsMap[model.__viewId];
+
+              if (view && view.containPoint) {
+                result = result || view.containPoint(value, model);
+              } else {
+                if ("development" !== 'production') {
+                  console.warn(key + ': ' + (view ? 'The found component do not support containPoint.' : 'No view mapping to the found component.'));
+                }
+              }
+            } else {
+              if ("development" !== 'production') {
+                console.warn(key + ': containPoint is not supported');
+              }
+            }
+          }, this);
+        }, this);
+        return !!result;
+      };
+      /**
+       * Get visual from series or data.
+       * @param finder
+       *        If string, e.g., 'series', means {seriesIndex: 0}.
+       *        If Object, could contain some of these properties below:
+       *        {
+       *            seriesIndex / seriesId / seriesName,
+       *            dataIndex / dataIndexInside
+       *        }
+       *        If dataIndex is not specified, series visual will be fetched,
+       *        but not data item visual.
+       *        If all of seriesIndex, seriesId, seriesName are not specified,
+       *        visual will be fetched from first series.
+       * @param visualType 'color', 'symbol', 'symbolSize'
+       */
+
+
+      ECharts.prototype.getVisual = function (finder, visualType) {
+        var ecModel = this._model;
+        var parsedFinder = parseFinder(ecModel, finder, {
+          defaultMainType: 'series'
+        });
+        var seriesModel = parsedFinder.seriesModel;
+
+        if ("development" !== 'production') {
+          if (!seriesModel) {
+            console.warn('There is no specified seires model');
           }
-          if (dispatchers) {
-            each(dispatchers, (dispatcher) => {
-              payload.type === HIGHLIGHT_ACTION_TYPE ? enterEmphasis(dispatcher) : leaveEmphasis(dispatcher);
+        }
+
+        var data = seriesModel.getData();
+        var dataIndexInside = parsedFinder.hasOwnProperty('dataIndexInside') ? parsedFinder.dataIndexInside : parsedFinder.hasOwnProperty('dataIndex') ? data.indexOfRawIndex(parsedFinder.dataIndex) : null;
+        return dataIndexInside != null ? getItemVisualFromData(data, dataIndexInside, visualType) : getVisualFromData(data, visualType);
+      };
+      /**
+       * Get view of corresponding component model
+       */
+
+
+      ECharts.prototype.getViewOfComponentModel = function (componentModel) {
+        return this._componentsMap[componentModel.__viewId];
+      };
+      /**
+       * Get view of corresponding series model
+       */
+
+
+      ECharts.prototype.getViewOfSeriesModel = function (seriesModel) {
+        return this._chartsMap[seriesModel.__viewId];
+      };
+
+      ECharts.prototype._initEvents = function () {
+        var _this = this;
+
+        each(MOUSE_EVENT_NAMES, function (eveName) {
+          var handler = function (e) {
+            var ecModel = _this.getModel();
+
+            var el = e.target;
+            var params;
+            var isGlobalOut = eveName === 'globalout'; // no e.target when 'globalout'.
+
+            if (isGlobalOut) {
+              params = {};
+            } else {
+              el && findEventDispatcher(el, function (parent) {
+                var ecData = getECData(parent);
+
+                if (ecData && ecData.dataIndex != null) {
+                  var dataModel = ecData.dataModel || ecModel.getSeriesByIndex(ecData.seriesIndex);
+                  params = dataModel && dataModel.getDataParams(ecData.dataIndex, ecData.dataType) || {};
+                  return true;
+                } // If element has custom eventData of components
+                else if (ecData.eventData) {
+                    params = extend({}, ecData.eventData);
+                    return true;
+                  }
+              }, true);
+            } // Contract: if params prepared in mouse event,
+            // these properties must be specified:
+            // {
+            //    componentType: string (component main type)
+            //    componentIndex: number
+            // }
+            // Otherwise event query can not work.
+
+
+            if (params) {
+              var componentType = params.componentType;
+              var componentIndex = params.componentIndex; // Special handling for historic reason: when trigger by
+              // markLine/markPoint/markArea, the componentType is
+              // 'markLine'/'markPoint'/'markArea', but we should better
+              // enable them to be queried by seriesIndex, since their
+              // option is set in each series.
+
+              if (componentType === 'markLine' || componentType === 'markPoint' || componentType === 'markArea') {
+                componentType = 'series';
+                componentIndex = params.seriesIndex;
+              }
+
+              var model = componentType && componentIndex != null && ecModel.getComponent(componentType, componentIndex);
+              var view = model && _this[model.mainType === 'series' ? '_chartsMap' : '_componentsMap'][model.__viewId];
+
+              if ("development" !== 'production') {
+                // `event.componentType` and `event[componentTpype + 'Index']` must not
+                // be missed, otherwise there is no way to distinguish source component.
+                // See `dataFormat.getDataParams`.
+                if (!isGlobalOut && !(model && view)) {
+                  console.warn('model or view can not be found by params');
+                }
+              }
+
+              params.event = e;
+              params.type = eveName;
+              _this._$eventProcessor.eventInfo = {
+                targetEl: el,
+                packedEvent: params,
+                model: model,
+                view: view
+              };
+
+              _this.trigger(eveName, params);
+            }
+          }; // Consider that some component (like tooltip, brush, ...)
+          // register zr event handler, but user event handler might
+          // do anything, such as call `setOption` or `dispatchAction`,
+          // which probably update any of the content and probably
+          // cause problem if it is called previous other inner handlers.
+
+
+          handler.zrEventfulCallAtLast = true;
+
+          _this._zr.on(eveName, handler, _this);
+        });
+        each(eventActionMap, function (actionType, eventType) {
+          _this._messageCenter.on(eventType, function (event) {
+            this.trigger(eventType, event);
+          }, _this);
+        }); // Extra events
+        // TODO register?
+
+        each(['selectchanged'], function (eventType) {
+          _this._messageCenter.on(eventType, function (event) {
+            this.trigger(eventType, event);
+          }, _this);
+        });
+        handleLegacySelectEvents(this._messageCenter, this, this._api);
+      };
+
+      ECharts.prototype.isDisposed = function () {
+        return this._disposed;
+      };
+
+      ECharts.prototype.clear = function () {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        this.setOption({
+          series: []
+        }, true);
+      };
+
+      ECharts.prototype.dispose = function () {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        this._disposed = true;
+        var dom = this.getDom();
+
+        if (dom) {
+          setAttribute(this.getDom(), DOM_ATTRIBUTE_KEY, '');
+        }
+
+        var chart = this;
+        var api = chart._api;
+        var ecModel = chart._model;
+        each(chart._componentsViews, function (component) {
+          component.dispose(ecModel, api);
+        });
+        each(chart._chartsViews, function (chart) {
+          chart.dispose(ecModel, api);
+        }); // Dispose after all views disposed
+
+        chart._zr.dispose(); // Set properties to null.
+        // To reduce the memory cost in case the top code still holds this instance unexpectedly.
+
+
+        chart._dom = chart._model = chart._chartsMap = chart._componentsMap = chart._chartsViews = chart._componentsViews = chart._scheduler = chart._api = chart._zr = chart._throttledZrFlush = chart._theme = chart._coordSysMgr = chart._messageCenter = null;
+        delete instances$1[chart.id];
+      };
+      /**
+       * Resize the chart
+       */
+
+
+      ECharts.prototype.resize = function (opts) {
+        if (this[IN_MAIN_PROCESS_KEY]) {
+          if ("development" !== 'production') {
+            error('`resize` should not be called during main process.');
+          }
+
+          return;
+        }
+
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        this._zr.resize(opts);
+
+        var ecModel = this._model; // Resize loading effect
+
+        this._loadingFX && this._loadingFX.resize();
+
+        if (!ecModel) {
+          return;
+        }
+
+        var needPrepare = ecModel.resetOption('media');
+        var silent = opts && opts.silent; // There is some real cases that:
+        // chart.setOption(option, { lazyUpdate: true });
+        // chart.resize();
+
+        if (this[PENDING_UPDATE]) {
+          if (silent == null) {
+            silent = this[PENDING_UPDATE].silent;
+          }
+
+          needPrepare = true;
+          this[PENDING_UPDATE] = null;
+        }
+
+        this[IN_MAIN_PROCESS_KEY] = true;
+
+        try {
+          needPrepare && prepare(this);
+          updateMethods.update.call(this, {
+            type: 'resize',
+            animation: extend({
+              // Disable animation
+              duration: 0
+            }, opts && opts.animation)
+          });
+        } catch (e) {
+          this[IN_MAIN_PROCESS_KEY] = false;
+          throw e;
+        }
+
+        this[IN_MAIN_PROCESS_KEY] = false;
+        flushPendingActions.call(this, silent);
+        triggerUpdatedEvent.call(this, silent);
+      };
+
+      ECharts.prototype.showLoading = function (name, cfg) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        if (isObject(name)) {
+          cfg = name;
+          name = '';
+        }
+
+        name = name || 'default';
+        this.hideLoading();
+
+        if (!loadingEffects[name]) {
+          if ("development" !== 'production') {
+            console.warn('Loading effects ' + name + ' not exists.');
+          }
+
+          return;
+        }
+
+        var el = loadingEffects[name](this._api, cfg);
+        var zr = this._zr;
+        this._loadingFX = el;
+        zr.add(el);
+      };
+      /**
+       * Hide loading effect
+       */
+
+
+      ECharts.prototype.hideLoading = function () {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        this._loadingFX && this._zr.remove(this._loadingFX);
+        this._loadingFX = null;
+      };
+
+      ECharts.prototype.makeActionFromEvent = function (eventObj) {
+        var payload = extend({}, eventObj);
+        payload.type = eventActionMap[eventObj.type];
+        return payload;
+      };
+      /**
+       * @param opt If pass boolean, means opt.silent
+       * @param opt.silent Default `false`. Whether trigger events.
+       * @param opt.flush Default `undefined`.
+       *        true: Flush immediately, and then pixel in canvas can be fetched
+       *            immediately. Caution: it might affect performance.
+       *        false: Not flush.
+       *        undefined: Auto decide whether perform flush.
+       */
+
+
+      ECharts.prototype.dispatchAction = function (payload, opt) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        if (!isObject(opt)) {
+          opt = {
+            silent: !!opt
+          };
+        }
+
+        if (!actions[payload.type]) {
+          return;
+        } // Avoid dispatch action before setOption. Especially in `connect`.
+
+
+        if (!this._model) {
+          return;
+        } // May dispatchAction in rendering procedure
+
+
+        if (this[IN_MAIN_PROCESS_KEY]) {
+          this._pendingActions.push(payload);
+
+          return;
+        }
+
+        var silent = opt.silent;
+        doDispatchAction.call(this, payload, silent);
+        var flush = opt.flush;
+
+        if (flush) {
+          this._zr.flush();
+        } else if (flush !== false && env.browser.weChat) {
+          // In WeChat embeded browser, `requestAnimationFrame` and `setInterval`
+          // hang when sliding page (on touch event), which cause that zr does not
+          // refresh util user interaction finished, which is not expected.
+          // But `dispatchAction` may be called too frequently when pan on touch
+          // screen, which impacts performance if do not throttle them.
+          this._throttledZrFlush();
+        }
+
+        flushPendingActions.call(this, silent);
+        triggerUpdatedEvent.call(this, silent);
+      };
+
+      ECharts.prototype.updateLabelLayout = function () {
+        lifecycle.trigger('series:layoutlabels', this._model, this._api, {
+          // Not adding series labels.
+          // TODO
+          updatedSeries: []
+        });
+      };
+
+      ECharts.prototype.appendData = function (params) {
+        if (this._disposed) {
+          disposedWarning(this.id);
+          return;
+        }
+
+        var seriesIndex = params.seriesIndex;
+        var ecModel = this.getModel();
+        var seriesModel = ecModel.getSeriesByIndex(seriesIndex);
+
+        if ("development" !== 'production') {
+          assert(params.data && seriesModel);
+        }
+
+        seriesModel.appendData(params); // Note: `appendData` does not support that update extent of coordinate
+        // system, util some scenario require that. In the expected usage of
+        // `appendData`, the initial extent of coordinate system should better
+        // be fixed by axis `min`/`max` setting or initial data, otherwise if
+        // the extent changed while `appendData`, the location of the painted
+        // graphic elements have to be changed, which make the usage of
+        // `appendData` meaningless.
+
+        this._scheduler.unfinished = true;
+        this.getZr().wakeUp();
+      }; // A work around for no `internal` modifier in ts yet but
+      // need to strictly hide private methods to JS users.
+
+
+      ECharts.internalField = function () {
+        prepare = function (ecIns) {
+          var scheduler = ecIns._scheduler;
+          scheduler.restorePipelines(ecIns._model);
+          scheduler.prepareStageTasks();
+          prepareView(ecIns, true);
+          prepareView(ecIns, false);
+          scheduler.plan();
+        };
+        /**
+         * Prepare view instances of charts and components
+         */
+
+
+        prepareView = function (ecIns, isComponent) {
+          var ecModel = ecIns._model;
+          var scheduler = ecIns._scheduler;
+          var viewList = isComponent ? ecIns._componentsViews : ecIns._chartsViews;
+          var viewMap = isComponent ? ecIns._componentsMap : ecIns._chartsMap;
+          var zr = ecIns._zr;
+          var api = ecIns._api;
+
+          for (var i = 0; i < viewList.length; i++) {
+            viewList[i].__alive = false;
+          }
+
+          isComponent ? ecModel.eachComponent(function (componentType, model) {
+            componentType !== 'series' && doPrepare(model);
+          }) : ecModel.eachSeries(doPrepare);
+
+          function doPrepare(model) {
+            // By defaut view will be reused if possible for the case that `setOption` with "notMerge"
+            // mode and need to enable transition animation. (Usually, when they have the same id, or
+            // especially no id but have the same type & name & index. See the `model.id` generation
+            // rule in `makeIdAndName` and `viewId` generation rule here).
+            // But in `replaceMerge` mode, this feature should be able to disabled when it is clear that
+            // the new model has nothing to do with the old model.
+            var requireNewView = model.__requireNewView; // This command should not work twice.
+
+            model.__requireNewView = false; // Consider: id same and type changed.
+
+            var viewId = '_ec_' + model.id + '_' + model.type;
+            var view = !requireNewView && viewMap[viewId];
+
+            if (!view) {
+              var classType = parseClassType(model.type);
+              var Clazz = isComponent ? ComponentView.getClass(classType.main, classType.sub) : // FIXME:TS
+              // (ChartView as ChartViewConstructor).getClass('series', classType.sub)
+              // For backward compat, still support a chart type declared as only subType
+              // like "liquidfill", but recommend "series.liquidfill"
+              // But need a base class to make a type series.
+              ChartView.getClass(classType.sub);
+
+              if ("development" !== 'production') {
+                assert(Clazz, classType.sub + ' does not exist.');
+              }
+
+              view = new Clazz();
+              view.init(ecModel, api);
+              viewMap[viewId] = view;
+              viewList.push(view);
+              zr.add(view.group);
+            }
+
+            model.__viewId = view.__id = viewId;
+            view.__alive = true;
+            view.__model = model;
+            view.group.__ecComponentInfo = {
+              mainType: model.mainType,
+              index: model.componentIndex
+            };
+            !isComponent && scheduler.prepareView(view, model, ecModel, api);
+          }
+
+          for (var i = 0; i < viewList.length;) {
+            var view = viewList[i];
+
+            if (!view.__alive) {
+              !isComponent && view.renderTask.dispose();
+              zr.remove(view.group);
+              view.dispose(ecModel, api);
+              viewList.splice(i, 1);
+
+              if (viewMap[view.__id] === view) {
+                delete viewMap[view.__id];
+              }
+
+              view.__id = view.group.__ecComponentInfo = null;
+            } else {
+              i++;
+            }
+          }
+        };
+
+        updateDirectly = function (ecIns, method, payload, mainType, subType) {
+          var ecModel = ecIns._model;
+          ecModel.setUpdatePayload(payload); // broadcast
+
+          if (!mainType) {
+            // FIXME
+            // Chart will not be update directly here, except set dirty.
+            // But there is no such scenario now.
+            each([].concat(ecIns._componentsViews).concat(ecIns._chartsViews), callView);
+            return;
+          }
+
+          var query = {};
+          query[mainType + 'Id'] = payload[mainType + 'Id'];
+          query[mainType + 'Index'] = payload[mainType + 'Index'];
+          query[mainType + 'Name'] = payload[mainType + 'Name'];
+          var condition = {
+            mainType: mainType,
+            query: query
+          };
+          subType && (condition.subType = subType); // subType may be '' by parseClassType;
+
+          var excludeSeriesId = payload.excludeSeriesId;
+          var excludeSeriesIdMap;
+
+          if (excludeSeriesId != null) {
+            excludeSeriesIdMap = createHashMap();
+            each(normalizeToArray(excludeSeriesId), function (id) {
+              var modelId = convertOptionIdName(id, null);
+
+              if (modelId != null) {
+                excludeSeriesIdMap.set(modelId, true);
+              }
+            });
+          } // If dispatchAction before setOption, do nothing.
+
+
+          ecModel && ecModel.eachComponent(condition, function (model) {
+            var isExcluded = excludeSeriesIdMap && excludeSeriesIdMap.get(model.id) !== null;
+
+            if (isExcluded) {
+              return;
+            }
+
+            if (isHighDownPayload(payload)) {
+              if (model instanceof SeriesModel) {
+                if (payload.type === HIGHLIGHT_ACTION_TYPE && !payload.notBlur && !model.get(['emphasis', 'disabled'])) {
+                  blurSeriesFromHighlightPayload(model, payload, ecIns._api);
+                }
+              } else {
+                var _a = findComponentHighDownDispatchers(model.mainType, model.componentIndex, payload.name, ecIns._api),
+                    focusSelf = _a.focusSelf,
+                    dispatchers = _a.dispatchers;
+
+                if (payload.type === HIGHLIGHT_ACTION_TYPE && focusSelf && !payload.notBlur) {
+                  blurComponent(model.mainType, model.componentIndex, ecIns._api);
+                } // PENDING:
+                // Whether to put this "enter emphasis" code in `ComponentView`,
+                // which will be the same as `ChartView` but might be not necessary
+                // and will be far from this logic.
+
+
+                if (dispatchers) {
+                  each(dispatchers, function (dispatcher) {
+                    payload.type === HIGHLIGHT_ACTION_TYPE ? enterEmphasis(dispatcher) : leaveEmphasis(dispatcher);
+                  });
+                }
+              }
+            } else if (isSelectChangePayload(payload)) {
+              // TODO geo
+              if (model instanceof SeriesModel) {
+                toggleSelectionFromPayload(model, payload, ecIns._api);
+                updateSeriesElementSelection(model);
+                markStatusToUpdate(ecIns);
+              }
+            }
+          }, ecIns);
+          ecModel && ecModel.eachComponent(condition, function (model) {
+            var isExcluded = excludeSeriesIdMap && excludeSeriesIdMap.get(model.id) !== null;
+
+            if (isExcluded) {
+              return;
+            }
+            callView(ecIns[mainType === 'series' ? '_chartsMap' : '_componentsMap'][model.__viewId]);
+          }, ecIns);
+
+          function callView(view) {
+            view && view.__alive && view[method] && view[method](view.__model, ecModel, ecIns._api, payload);
+          }
+        };
+
+        updateMethods = {
+          prepareAndUpdate: function (payload) {
+            prepare(this);
+            updateMethods.update.call(this, payload, {
+              // Needs to mark option changed if newOption is given.
+              // It's from MagicType.
+              // TODO If use a separate flag optionChanged in payload?
+              optionChanged: payload.newOption != null
+            });
+          },
+          update: function (payload, updateParams) {
+            var ecModel = this._model;
+            var api = this._api;
+            var zr = this._zr;
+            var coordSysMgr = this._coordSysMgr;
+            var scheduler = this._scheduler; // update before setOption
+
+            if (!ecModel) {
+              return;
+            }
+
+            ecModel.setUpdatePayload(payload);
+            scheduler.restoreData(ecModel, payload);
+            scheduler.performSeriesTasks(ecModel); // TODO
+            // Save total ecModel here for undo/redo (after restoring data and before processing data).
+            // Undo (restoration of total ecModel) can be carried out in 'action' or outside API call.
+            // Create new coordinate system each update
+            // In LineView may save the old coordinate system and use it to get the orignal point
+
+            coordSysMgr.create(ecModel, api);
+            scheduler.performDataProcessorTasks(ecModel, payload); // Current stream render is not supported in data process. So we can update
+            // stream modes after data processing, where the filtered data is used to
+            // deteming whether use progressive rendering.
+
+            updateStreamModes(this, ecModel); // We update stream modes before coordinate system updated, then the modes info
+            // can be fetched when coord sys updating (consider the barGrid extent fix). But
+            // the drawback is the full coord info can not be fetched. Fortunately this full
+            // coord is not requied in stream mode updater currently.
+
+            coordSysMgr.update(ecModel, api);
+            clearColorPalette(ecModel);
+            scheduler.performVisualTasks(ecModel, payload);
+            render(this, ecModel, api, payload, updateParams); // Set background
+
+            var backgroundColor = ecModel.get('backgroundColor') || 'transparent';
+            var darkMode = ecModel.get('darkMode');
+            zr.setBackgroundColor(backgroundColor); // Force set dark mode.
+
+            if (darkMode != null && darkMode !== 'auto') {
+              zr.setDarkMode(darkMode);
+            }
+
+            lifecycle.trigger('afterupdate', ecModel, api);
+          },
+          updateTransform: function (payload) {
+            var _this = this;
+
+            var ecModel = this._model;
+            var api = this._api; // update before setOption
+
+            if (!ecModel) {
+              return;
+            }
+
+            ecModel.setUpdatePayload(payload); // ChartView.markUpdateMethod(payload, 'updateTransform');
+
+            var componentDirtyList = [];
+            ecModel.eachComponent(function (componentType, componentModel) {
+              if (componentType === 'series') {
+                return;
+              }
+
+              var componentView = _this.getViewOfComponentModel(componentModel);
+
+              if (componentView && componentView.__alive) {
+                if (componentView.updateTransform) {
+                  var result = componentView.updateTransform(componentModel, ecModel, api, payload);
+                  result && result.update && componentDirtyList.push(componentView);
+                } else {
+                  componentDirtyList.push(componentView);
+                }
+              }
+            });
+            var seriesDirtyMap = createHashMap();
+            ecModel.eachSeries(function (seriesModel) {
+              var chartView = _this._chartsMap[seriesModel.__viewId];
+
+              if (chartView.updateTransform) {
+                var result = chartView.updateTransform(seriesModel, ecModel, api, payload);
+                result && result.update && seriesDirtyMap.set(seriesModel.uid, 1);
+              } else {
+                seriesDirtyMap.set(seriesModel.uid, 1);
+              }
+            });
+            clearColorPalette(ecModel); // Keep pipe to the exist pipeline because it depends on the render task of the full pipeline.
+            // this._scheduler.performVisualTasks(ecModel, payload, 'layout', true);
+
+            this._scheduler.performVisualTasks(ecModel, payload, {
+              setDirty: true,
+              dirtyMap: seriesDirtyMap
+            }); // Currently, not call render of components. Geo render cost a lot.
+            // renderComponents(ecIns, ecModel, api, payload, componentDirtyList);
+
+
+            renderSeries(this, ecModel, api, payload, {}, seriesDirtyMap);
+            lifecycle.trigger('afterupdate', ecModel, api);
+          },
+          updateView: function (payload) {
+            var ecModel = this._model; // update before setOption
+
+            if (!ecModel) {
+              return;
+            }
+
+            ecModel.setUpdatePayload(payload);
+            ChartView.markUpdateMethod(payload, 'updateView');
+            clearColorPalette(ecModel); // Keep pipe to the exist pipeline because it depends on the render task of the full pipeline.
+
+            this._scheduler.performVisualTasks(ecModel, payload, {
+              setDirty: true
+            });
+
+            render(this, ecModel, this._api, payload, {});
+            lifecycle.trigger('afterupdate', ecModel, this._api);
+          },
+          updateVisual: function (payload) {
+            // updateMethods.update.call(this, payload);
+            var _this = this;
+
+            var ecModel = this._model; // update before setOption
+
+            if (!ecModel) {
+              return;
+            }
+
+            ecModel.setUpdatePayload(payload); // clear all visual
+
+            ecModel.eachSeries(function (seriesModel) {
+              seriesModel.getData().clearAllVisual();
+            }); // Perform visual
+
+            ChartView.markUpdateMethod(payload, 'updateVisual');
+            clearColorPalette(ecModel); // Keep pipe to the exist pipeline because it depends on the render task of the full pipeline.
+
+            this._scheduler.performVisualTasks(ecModel, payload, {
+              visualType: 'visual',
+              setDirty: true
+            });
+
+            ecModel.eachComponent(function (componentType, componentModel) {
+              if (componentType !== 'series') {
+                var componentView = _this.getViewOfComponentModel(componentModel);
+
+                componentView && componentView.__alive && componentView.updateVisual(componentModel, ecModel, _this._api, payload);
+              }
+            });
+            ecModel.eachSeries(function (seriesModel) {
+              var chartView = _this._chartsMap[seriesModel.__viewId];
+              chartView.updateVisual(seriesModel, ecModel, _this._api, payload);
+            });
+            lifecycle.trigger('afterupdate', ecModel, this._api);
+          },
+          updateLayout: function (payload) {
+            updateMethods.update.call(this, payload);
+          }
+        };
+
+        doConvertPixel = function (ecIns, methodName, finder, value) {
+          if (ecIns._disposed) {
+            disposedWarning(ecIns.id);
+            return;
+          }
+
+          var ecModel = ecIns._model;
+
+          var coordSysList = ecIns._coordSysMgr.getCoordinateSystems();
+
+          var result;
+          var parsedFinder = parseFinder(ecModel, finder);
+
+          for (var i = 0; i < coordSysList.length; i++) {
+            var coordSys = coordSysList[i];
+
+            if (coordSys[methodName] && (result = coordSys[methodName](ecModel, parsedFinder, value)) != null) {
+              return result;
+            }
+          }
+
+          if ("development" !== 'production') {
+            console.warn('No coordinate system that supports ' + methodName + ' found by the given finder.');
+          }
+        };
+
+        updateStreamModes = function (ecIns, ecModel) {
+          var chartsMap = ecIns._chartsMap;
+          var scheduler = ecIns._scheduler;
+          ecModel.eachSeries(function (seriesModel) {
+            scheduler.updateStreamModes(seriesModel, chartsMap[seriesModel.__viewId]);
+          });
+        };
+
+        doDispatchAction = function (payload, silent) {
+          var _this = this;
+
+          var ecModel = this.getModel();
+          var payloadType = payload.type;
+          var escapeConnect = payload.escapeConnect;
+          var actionWrap = actions[payloadType];
+          var actionInfo = actionWrap.actionInfo;
+          var cptTypeTmp = (actionInfo.update || 'update').split(':');
+          var updateMethod = cptTypeTmp.pop();
+          var cptType = cptTypeTmp[0] != null && parseClassType(cptTypeTmp[0]);
+          this[IN_MAIN_PROCESS_KEY] = true;
+          var payloads = [payload];
+          var batched = false; // Batch action
+
+          if (payload.batch) {
+            batched = true;
+            payloads = map(payload.batch, function (item) {
+              item = defaults(extend({}, item), payload);
+              item.batch = null;
+              return item;
+            });
+          }
+
+          var eventObjBatch = [];
+          var eventObj;
+          var isSelectChange = isSelectChangePayload(payload);
+          var isHighDown = isHighDownPayload(payload); // Only leave blur once if there are multiple batches.
+
+          if (isHighDown) {
+            allLeaveBlur(this._api);
+          }
+
+          each(payloads, function (batchItem) {
+            // Action can specify the event by return it.
+            eventObj = actionWrap.action(batchItem, _this._model, _this._api); // Emit event outside
+
+            eventObj = eventObj || extend({}, batchItem); // Convert type to eventType
+
+            eventObj.type = actionInfo.event || eventObj.type;
+            eventObjBatch.push(eventObj); // light update does not perform data process, layout and visual.
+
+            if (isHighDown) {
+              var _a = preParseFinder(payload),
+                  queryOptionMap = _a.queryOptionMap,
+                  mainTypeSpecified = _a.mainTypeSpecified;
+
+              var componentMainType = mainTypeSpecified ? queryOptionMap.keys()[0] : 'series';
+              updateDirectly(_this, updateMethod, batchItem, componentMainType);
+              markStatusToUpdate(_this);
+            } else if (isSelectChange) {
+              // At present `dispatchAction({ type: 'select', ... })` is not supported on components.
+              // geo still use 'geoselect'.
+              updateDirectly(_this, updateMethod, batchItem, 'series');
+              markStatusToUpdate(_this);
+            } else if (cptType) {
+              updateDirectly(_this, updateMethod, batchItem, cptType.main, cptType.sub);
+            }
+          });
+
+          if (updateMethod !== 'none' && !isHighDown && !isSelectChange && !cptType) {
+            try {
+              // Still dirty
+              if (this[PENDING_UPDATE]) {
+                prepare(this);
+                updateMethods.update.call(this, payload);
+                this[PENDING_UPDATE] = null;
+              } else {
+                updateMethods[updateMethod].call(this, payload);
+              }
+            } catch (e) {
+              this[IN_MAIN_PROCESS_KEY] = false;
+              throw e;
+            }
+          } // Follow the rule of action batch
+
+
+          if (batched) {
+            eventObj = {
+              type: actionInfo.event || payloadType,
+              escapeConnect: escapeConnect,
+              batch: eventObjBatch
+            };
+          } else {
+            eventObj = eventObjBatch[0];
+          }
+
+          this[IN_MAIN_PROCESS_KEY] = false;
+
+          if (!silent) {
+            var messageCenter = this._messageCenter;
+            messageCenter.trigger(eventObj.type, eventObj); // Extra triggered 'selectchanged' event
+
+            if (isSelectChange) {
+              var newObj = {
+                type: 'selectchanged',
+                escapeConnect: escapeConnect,
+                selected: getAllSelectedIndices(ecModel),
+                isFromClick: payload.isFromClick || false,
+                fromAction: payload.type,
+                fromActionPayload: payload
+              };
+              messageCenter.trigger(newObj.type, newObj);
+            }
+          }
+        };
+
+        flushPendingActions = function (silent) {
+          var pendingActions = this._pendingActions;
+
+          while (pendingActions.length) {
+            var payload = pendingActions.shift();
+            doDispatchAction.call(this, payload, silent);
+          }
+        };
+
+        triggerUpdatedEvent = function (silent) {
+          !silent && this.trigger('updated');
+        };
+        /**
+         * Event `rendered` is triggered when zr
+         * rendered. It is useful for realtime
+         * snapshot (reflect animation).
+         *
+         * Event `finished` is triggered when:
+         * (1) zrender rendering finished.
+         * (2) initial animation finished.
+         * (3) progressive rendering finished.
+         * (4) no pending action.
+         * (5) no delayed setOption needs to be processed.
+         */
+
+
+        bindRenderedEvent = function (zr, ecIns) {
+          zr.on('rendered', function (params) {
+            ecIns.trigger('rendered', params); // The `finished` event should not be triggered repeatly,
+            // so it should only be triggered when rendering indeed happend
+            // in zrender. (Consider the case that dipatchAction is keep
+            // triggering when mouse move).
+
+            if ( // Although zr is dirty if initial animation is not finished
+            // and this checking is called on frame, we also check
+            // animation finished for robustness.
+            zr.animation.isFinished() && !ecIns[PENDING_UPDATE] && !ecIns._scheduler.unfinished && !ecIns._pendingActions.length) {
+              ecIns.trigger('finished');
+            }
+          });
+        };
+
+        bindMouseEvent = function (zr, ecIns) {
+          zr.on('mouseover', function (e) {
+            var el = e.target;
+            var dispatcher = findEventDispatcher(el, isHighDownDispatcher);
+
+            if (dispatcher) {
+              handleGlobalMouseOverForHighDown(dispatcher, e, ecIns._api);
+              markStatusToUpdate(ecIns);
+            }
+          }).on('mouseout', function (e) {
+            var el = e.target;
+            var dispatcher = findEventDispatcher(el, isHighDownDispatcher);
+
+            if (dispatcher) {
+              handleGlobalMouseOutForHighDown(dispatcher, e, ecIns._api);
+              markStatusToUpdate(ecIns);
+            }
+          }).on('click', function (e) {
+            var el = e.target;
+            var dispatcher = findEventDispatcher(el, function (target) {
+              return getECData(target).dataIndex != null;
+            }, true);
+
+            if (dispatcher) {
+              var actionType = dispatcher.selected ? 'unselect' : 'select';
+              var ecData = getECData(dispatcher);
+
+              ecIns._api.dispatchAction({
+                type: actionType,
+                dataType: ecData.dataType,
+                dataIndexInside: ecData.dataIndex,
+                seriesIndex: ecData.seriesIndex,
+                isFromClick: true
+              });
+            }
+          });
+        };
+
+        function clearColorPalette(ecModel) {
+          ecModel.clearColorPalette();
+          ecModel.eachSeries(function (seriesModel) {
+            seriesModel.clearColorPalette();
+          });
+        }
+
+        function allocateZlevels(ecModel) {
+          var componentZLevels = [];
+          var seriesZLevels = [];
+          var hasSeperateZLevel = false;
+          ecModel.eachComponent(function (componentType, componentModel) {
+            var zlevel = componentModel.get('zlevel') || 0;
+            var z = componentModel.get('z') || 0;
+            var zlevelKey = componentModel.getZLevelKey();
+            hasSeperateZLevel = hasSeperateZLevel || !!zlevelKey;
+            (componentType === 'series' ? seriesZLevels : componentZLevels).push({
+              zlevel: zlevel,
+              z: z,
+              idx: componentModel.componentIndex,
+              type: componentType,
+              key: zlevelKey
+            });
+          });
+
+          if (hasSeperateZLevel) {
+            // Series after component
+            var zLevels = componentZLevels.concat(seriesZLevels);
+            var lastSeriesZLevel_1;
+            var lastSeriesKey_1;
+            sort(zLevels, function (a, b) {
+              if (a.zlevel === b.zlevel) {
+                return a.z - b.z;
+              }
+
+              return a.zlevel - b.zlevel;
+            });
+            each(zLevels, function (item) {
+              var componentModel = ecModel.getComponent(item.type, item.idx);
+              var zlevel = item.zlevel;
+              var key = item.key;
+
+              if (lastSeriesZLevel_1 != null) {
+                zlevel = Math.max(lastSeriesZLevel_1, zlevel);
+              }
+
+              if (key) {
+                if (zlevel === lastSeriesZLevel_1 && key !== lastSeriesKey_1) {
+                  zlevel++;
+                }
+
+                lastSeriesKey_1 = key;
+              } else if (lastSeriesKey_1) {
+                if (zlevel === lastSeriesZLevel_1) {
+                  zlevel++;
+                }
+
+                lastSeriesKey_1 = '';
+              }
+
+              lastSeriesZLevel_1 = zlevel;
+              componentModel.setZLevel(zlevel);
             });
           }
         }
-      } else if (isSelectChangePayload(payload)) {
-        if (model instanceof Series_default) {
-          toggleSelectionFromPayload(model, payload, ecIns._api);
-          updateSeriesElementSelection(model);
-          markStatusToUpdate(ecIns);
-        }
-      }
-    }, ecIns);
-    ecModel && ecModel.eachComponent(condition, function(model) {
-      const isExcluded = excludeSeriesIdMap && excludeSeriesIdMap.get(model.id) != null;
-      if (isExcluded) {
-        return;
-      }
-      ;
-      callView(ecIns[mainType === "series" ? "_chartsMap" : "_componentsMap"][model.__viewId]);
-    }, ecIns);
-    function callView(view) {
-      view && view.__alive && view[method] && view[method](view.__model, ecModel, ecIns._api, payload);
-    }
-  };
-  updateMethods = {
-    prepareAndUpdate(payload) {
-      prepare(this);
-      updateMethods.update.call(this, payload, {
-        optionChanged: payload.newOption != null
-      });
-    },
-    update(payload, updateParams) {
-      const ecModel = this._model;
-      const api2 = this._api;
-      const zr = this._zr;
-      const coordSysMgr = this._coordSysMgr;
-      const scheduler = this._scheduler;
-      if (!ecModel) {
-        return;
-      }
-      ecModel.setUpdatePayload(payload);
-      scheduler.restoreData(ecModel, payload);
-      scheduler.performSeriesTasks(ecModel);
-      coordSysMgr.create(ecModel, api2);
-      scheduler.performDataProcessorTasks(ecModel, payload);
-      updateStreamModes(this, ecModel);
-      coordSysMgr.update(ecModel, api2);
-      clearColorPalette(ecModel);
-      scheduler.performVisualTasks(ecModel, payload);
-      render(this, ecModel, api2, payload, updateParams);
-      const backgroundColor2 = ecModel.get("backgroundColor") || "transparent";
-      const darkMode = ecModel.get("darkMode");
-      zr.setBackgroundColor(backgroundColor2);
-      if (darkMode != null && darkMode !== "auto") {
-        zr.setDarkMode(darkMode);
-      }
-      lifecycle_default.trigger("afterupdate", ecModel, api2);
-    },
-    updateTransform(payload) {
-      const ecModel = this._model;
-      const api2 = this._api;
-      if (!ecModel) {
-        return;
-      }
-      ecModel.setUpdatePayload(payload);
-      const componentDirtyList = [];
-      ecModel.eachComponent((componentType, componentModel) => {
-        if (componentType === "series") {
-          return;
-        }
-        const componentView = this.getViewOfComponentModel(componentModel);
-        if (componentView && componentView.__alive) {
-          if (componentView.updateTransform) {
-            const result = componentView.updateTransform(componentModel, ecModel, api2, payload);
-            result && result.update && componentDirtyList.push(componentView);
-          } else {
-            componentDirtyList.push(componentView);
-          }
-        }
-      });
-      const seriesDirtyMap = createHashMap();
-      ecModel.eachSeries((seriesModel) => {
-        const chartView = this._chartsMap[seriesModel.__viewId];
-        if (chartView.updateTransform) {
-          const result = chartView.updateTransform(seriesModel, ecModel, api2, payload);
-          result && result.update && seriesDirtyMap.set(seriesModel.uid, 1);
-        } else {
-          seriesDirtyMap.set(seriesModel.uid, 1);
-        }
-      });
-      clearColorPalette(ecModel);
-      this._scheduler.performVisualTasks(ecModel, payload, {setDirty: true, dirtyMap: seriesDirtyMap});
-      renderSeries(this, ecModel, api2, payload, {}, seriesDirtyMap);
-      lifecycle_default.trigger("afterupdate", ecModel, api2);
-    },
-    updateView(payload) {
-      const ecModel = this._model;
-      if (!ecModel) {
-        return;
-      }
-      ecModel.setUpdatePayload(payload);
-      Chart_default.markUpdateMethod(payload, "updateView");
-      clearColorPalette(ecModel);
-      this._scheduler.performVisualTasks(ecModel, payload, {setDirty: true});
-      render(this, ecModel, this._api, payload, {});
-      lifecycle_default.trigger("afterupdate", ecModel, this._api);
-    },
-    updateVisual(payload) {
-      const ecModel = this._model;
-      if (!ecModel) {
-        return;
-      }
-      ecModel.setUpdatePayload(payload);
-      ecModel.eachSeries(function(seriesModel) {
-        seriesModel.getData().clearAllVisual();
-      });
-      Chart_default.markUpdateMethod(payload, "updateVisual");
-      clearColorPalette(ecModel);
-      this._scheduler.performVisualTasks(ecModel, payload, {visualType: "visual", setDirty: true});
-      ecModel.eachComponent((componentType, componentModel) => {
-        if (componentType !== "series") {
-          const componentView = this.getViewOfComponentModel(componentModel);
-          componentView && componentView.__alive && componentView.updateVisual(componentModel, ecModel, this._api, payload);
-        }
-      });
-      ecModel.eachSeries((seriesModel) => {
-        const chartView = this._chartsMap[seriesModel.__viewId];
-        chartView.updateVisual(seriesModel, ecModel, this._api, payload);
-      });
-      lifecycle_default.trigger("afterupdate", ecModel, this._api);
-    },
-    updateLayout(payload) {
-      updateMethods.update.call(this, payload);
-    }
-  };
-  doConvertPixel = function(ecIns, methodName, finder, value) {
-    if (ecIns._disposed) {
-      disposedWarning(ecIns.id);
-      return;
-    }
-    const ecModel = ecIns._model;
-    const coordSysList = ecIns._coordSysMgr.getCoordinateSystems();
-    let result;
-    const parsedFinder = parseFinder(ecModel, finder);
-    for (let i = 0; i < coordSysList.length; i++) {
-      const coordSys = coordSysList[i];
-      if (coordSys[methodName] && (result = coordSys[methodName](ecModel, parsedFinder, value)) != null) {
-        return result;
-      }
-    }
-    if (true) {
-      warn("No coordinate system that supports " + methodName + " found by the given finder.");
-    }
-  };
-  updateStreamModes = function(ecIns, ecModel) {
-    const chartsMap = ecIns._chartsMap;
-    const scheduler = ecIns._scheduler;
-    ecModel.eachSeries(function(seriesModel) {
-      scheduler.updateStreamModes(seriesModel, chartsMap[seriesModel.__viewId]);
-    });
-  };
-  doDispatchAction = function(payload, silent) {
-    const ecModel = this.getModel();
-    const payloadType = payload.type;
-    const escapeConnect = payload.escapeConnect;
-    const actionWrap = actions[payloadType];
-    const actionInfo3 = actionWrap.actionInfo;
-    const cptTypeTmp = (actionInfo3.update || "update").split(":");
-    const updateMethod = cptTypeTmp.pop();
-    const cptType = cptTypeTmp[0] != null && parseClassType(cptTypeTmp[0]);
-    this[IN_MAIN_PROCESS_KEY] = true;
-    let payloads = [payload];
-    let batched = false;
-    if (payload.batch) {
-      batched = true;
-      payloads = map(payload.batch, function(item) {
-        item = defaults(extend({}, item), payload);
-        item.batch = null;
-        return item;
-      });
-    }
-    const eventObjBatch = [];
-    let eventObj;
-    const isSelectChange = isSelectChangePayload(payload);
-    const isHighDown = isHighDownPayload(payload);
-    if (isHighDown) {
-      allLeaveBlur(this._api);
-    }
-    each(payloads, (batchItem) => {
-      eventObj = actionWrap.action(batchItem, this._model, this._api);
-      eventObj = eventObj || extend({}, batchItem);
-      eventObj.type = actionInfo3.event || eventObj.type;
-      eventObjBatch.push(eventObj);
-      if (isHighDown) {
-        const {queryOptionMap, mainTypeSpecified} = preParseFinder(payload);
-        const componentMainType = mainTypeSpecified ? queryOptionMap.keys()[0] : "series";
-        updateDirectly(this, updateMethod, batchItem, componentMainType);
-        markStatusToUpdate(this);
-      } else if (isSelectChange) {
-        updateDirectly(this, updateMethod, batchItem, "series");
-        markStatusToUpdate(this);
-      } else if (cptType) {
-        updateDirectly(this, updateMethod, batchItem, cptType.main, cptType.sub);
-      }
-    });
-    if (updateMethod !== "none" && !isHighDown && !isSelectChange && !cptType) {
-      try {
-        if (this[PENDING_UPDATE]) {
-          prepare(this);
-          updateMethods.update.call(this, payload);
-          this[PENDING_UPDATE] = null;
-        } else {
-          updateMethods[updateMethod].call(this, payload);
-        }
-      } catch (e2) {
-        this[IN_MAIN_PROCESS_KEY] = false;
-        throw e2;
-      }
-    }
-    if (batched) {
-      eventObj = {
-        type: actionInfo3.event || payloadType,
-        escapeConnect,
-        batch: eventObjBatch
-      };
-    } else {
-      eventObj = eventObjBatch[0];
-    }
-    this[IN_MAIN_PROCESS_KEY] = false;
-    if (!silent) {
-      const messageCenter = this._messageCenter;
-      messageCenter.trigger(eventObj.type, eventObj);
-      if (isSelectChange) {
-        const newObj = {
-          type: "selectchanged",
-          escapeConnect,
-          selected: getAllSelectedIndices(ecModel),
-          isFromClick: payload.isFromClick || false,
-          fromAction: payload.type,
-          fromActionPayload: payload
-        };
-        messageCenter.trigger(newObj.type, newObj);
-      }
-    }
-  };
-  flushPendingActions = function(silent) {
-    const pendingActions = this._pendingActions;
-    while (pendingActions.length) {
-      const payload = pendingActions.shift();
-      doDispatchAction.call(this, payload, silent);
-    }
-  };
-  triggerUpdatedEvent = function(silent) {
-    !silent && this.trigger("updated");
-  };
-  bindRenderedEvent = function(zr, ecIns) {
-    zr.on("rendered", function(params) {
-      ecIns.trigger("rendered", params);
-      if (zr.animation.isFinished() && !ecIns[PENDING_UPDATE] && !ecIns._scheduler.unfinished && !ecIns._pendingActions.length) {
-        ecIns.trigger("finished");
-      }
-    });
-  };
-  bindMouseEvent = function(zr, ecIns) {
-    zr.on("mouseover", function(e2) {
-      const el = e2.target;
-      const dispatcher = findEventDispatcher(el, isHighDownDispatcher);
-      if (dispatcher) {
-        handleGlobalMouseOverForHighDown(dispatcher, e2, ecIns._api);
-        markStatusToUpdate(ecIns);
-      }
-    }).on("mouseout", function(e2) {
-      const el = e2.target;
-      const dispatcher = findEventDispatcher(el, isHighDownDispatcher);
-      if (dispatcher) {
-        handleGlobalMouseOutForHighDown(dispatcher, e2, ecIns._api);
-        markStatusToUpdate(ecIns);
-      }
-    }).on("click", function(e2) {
-      const el = e2.target;
-      const dispatcher = findEventDispatcher(el, (target) => getECData(target).dataIndex != null, true);
-      if (dispatcher) {
-        const actionType = dispatcher.selected ? "unselect" : "select";
-        const ecData = getECData(dispatcher);
-        ecIns._api.dispatchAction({
-          type: actionType,
-          dataType: ecData.dataType,
-          dataIndexInside: ecData.dataIndex,
-          seriesIndex: ecData.seriesIndex,
-          isFromClick: true
-        });
-      }
-    });
-  };
-  function clearColorPalette(ecModel) {
-    ecModel.clearColorPalette();
-    ecModel.eachSeries(function(seriesModel) {
-      seriesModel.clearColorPalette();
-    });
-  }
-  ;
-  function allocateZlevels(ecModel) {
-    ;
-    const componentZLevels = [];
-    const seriesZLevels = [];
-    let hasSeperateZLevel = false;
-    ecModel.eachComponent(function(componentType, componentModel) {
-      const zlevel = componentModel.get("zlevel") || 0;
-      const z = componentModel.get("z") || 0;
-      const zlevelKey = componentModel.getZLevelKey();
-      hasSeperateZLevel = hasSeperateZLevel || !!zlevelKey;
-      (componentType === "series" ? seriesZLevels : componentZLevels).push({
-        zlevel,
-        z,
-        idx: componentModel.componentIndex,
-        type: componentType,
-        key: zlevelKey
-      });
-    });
-    if (hasSeperateZLevel) {
-      const zLevels = componentZLevels.concat(seriesZLevels);
-      let lastSeriesZLevel;
-      let lastSeriesKey;
-      sort(zLevels, (a, b) => {
-        if (a.zlevel === b.zlevel) {
-          return a.z - b.z;
-        }
-        return a.zlevel - b.zlevel;
-      });
-      each(zLevels, (item) => {
-        const componentModel = ecModel.getComponent(item.type, item.idx);
-        let zlevel = item.zlevel;
-        const key = item.key;
-        if (lastSeriesZLevel != null) {
-          zlevel = Math.max(lastSeriesZLevel, zlevel);
-        }
-        if (key) {
-          if (zlevel === lastSeriesZLevel && key !== lastSeriesKey) {
-            zlevel++;
-          }
-          lastSeriesKey = key;
-        } else if (lastSeriesKey) {
-          if (zlevel === lastSeriesZLevel) {
-            zlevel++;
-          }
-          lastSeriesKey = "";
-        }
-        lastSeriesZLevel = zlevel;
-        componentModel.setZLevel(zlevel);
-      });
-    }
-  }
-  render = (ecIns, ecModel, api2, payload, updateParams) => {
-    allocateZlevels(ecModel);
-    renderComponents(ecIns, ecModel, api2, payload, updateParams);
-    each(ecIns._chartsViews, function(chart) {
-      chart.__alive = false;
-    });
-    renderSeries(ecIns, ecModel, api2, payload, updateParams);
-    each(ecIns._chartsViews, function(chart) {
-      if (!chart.__alive) {
-        chart.remove(ecModel, api2);
-      }
-    });
-  };
-  renderComponents = (ecIns, ecModel, api2, payload, updateParams, dirtyList) => {
-    each(dirtyList || ecIns._componentsViews, function(componentView) {
-      const componentModel = componentView.__model;
-      clearStates(componentModel, componentView);
-      componentView.render(componentModel, ecModel, api2, payload);
-      updateZ3(componentModel, componentView);
-      updateStates(componentModel, componentView);
-    });
-  };
-  renderSeries = (ecIns, ecModel, api2, payload, updateParams, dirtyMap) => {
-    const scheduler = ecIns._scheduler;
-    updateParams = extend(updateParams || {}, {
-      updatedSeries: ecModel.getSeries()
-    });
-    lifecycle_default.trigger("series:beforeupdate", ecModel, api2, updateParams);
-    let unfinished = false;
-    ecModel.eachSeries(function(seriesModel) {
-      const chartView = ecIns._chartsMap[seriesModel.__viewId];
-      chartView.__alive = true;
-      const renderTask = chartView.renderTask;
-      scheduler.updatePayload(renderTask, payload);
-      clearStates(seriesModel, chartView);
-      if (dirtyMap && dirtyMap.get(seriesModel.uid)) {
-        renderTask.dirty();
-      }
-      if (renderTask.perform(scheduler.getPerformArgs(renderTask))) {
-        unfinished = true;
-      }
-      chartView.group.silent = !!seriesModel.get("silent");
-      updateBlend(seriesModel, chartView);
-      updateSeriesElementSelection(seriesModel);
-    });
-    scheduler.unfinished = unfinished || scheduler.unfinished;
-    lifecycle_default.trigger("series:layoutlabels", ecModel, api2, updateParams);
-    lifecycle_default.trigger("series:transition", ecModel, api2, updateParams);
-    ecModel.eachSeries(function(seriesModel) {
-      const chartView = ecIns._chartsMap[seriesModel.__viewId];
-      updateZ3(seriesModel, chartView);
-      updateStates(seriesModel, chartView);
-    });
-    updateHoverLayerStatus(ecIns, ecModel);
-    lifecycle_default.trigger("series:afterupdate", ecModel, api2, updateParams);
-  };
-  markStatusToUpdate = function(ecIns) {
-    ecIns[STATUS_NEEDS_UPDATE_KEY] = true;
-    ecIns.getZr().wakeUp();
-  };
-  applyChangedStates = function(ecIns) {
-    if (!ecIns[STATUS_NEEDS_UPDATE_KEY]) {
-      return;
-    }
-    ecIns.getZr().storage.traverse(function(el) {
-      if (isElementRemoved(el)) {
-        return;
-      }
-      applyElementStates(el);
-    });
-    ecIns[STATUS_NEEDS_UPDATE_KEY] = false;
-  };
-  function applyElementStates(el) {
-    const newStates = [];
-    const oldStates = el.currentStates;
-    for (let i = 0; i < oldStates.length; i++) {
-      const stateName = oldStates[i];
-      if (!(stateName === "emphasis" || stateName === "blur" || stateName === "select")) {
-        newStates.push(stateName);
-      }
-    }
-    if (el.selected && el.states.select) {
-      newStates.push("select");
-    }
-    if (el.hoverState === HOVER_STATE_EMPHASIS && el.states.emphasis) {
-      newStates.push("emphasis");
-    } else if (el.hoverState === HOVER_STATE_BLUR && el.states.blur) {
-      newStates.push("blur");
-    }
-    el.useStates(newStates);
-  }
-  function updateHoverLayerStatus(ecIns, ecModel) {
-    const zr = ecIns._zr;
-    const storage2 = zr.storage;
-    let elCount = 0;
-    storage2.traverse(function(el) {
-      if (!el.isGroup) {
-        elCount++;
-      }
-    });
-    if (elCount > ecModel.get("hoverLayerThreshold") && !env_default.node && !env_default.worker) {
-      ecModel.eachSeries(function(seriesModel) {
-        if (seriesModel.preventUsingHoverLayer) {
-          return;
-        }
-        const chartView = ecIns._chartsMap[seriesModel.__viewId];
-        if (chartView.__alive) {
-          chartView.eachRendered((el) => {
-            if (el.states.emphasis) {
-              el.states.emphasis.hoverLayer = true;
+
+        render = function (ecIns, ecModel, api, payload, updateParams) {
+          allocateZlevels(ecModel);
+          renderComponents(ecIns, ecModel, api, payload, updateParams);
+          each(ecIns._chartsViews, function (chart) {
+            chart.__alive = false;
+          });
+          renderSeries(ecIns, ecModel, api, payload, updateParams); // Remove groups of unrendered charts
+
+          each(ecIns._chartsViews, function (chart) {
+            if (!chart.__alive) {
+              chart.remove(ecModel, api);
             }
           });
-        }
-      });
-    }
-  }
-  ;
-  function updateBlend(seriesModel, chartView) {
-    const blendMode = seriesModel.get("blendMode") || null;
-    chartView.eachRendered((el) => {
-      if (!el.isGroup) {
-        el.style.blend = blendMode;
-      }
-    });
-  }
-  ;
-  function updateZ3(model, view) {
-    if (model.preventAutoZ) {
-      return;
-    }
-    const z = model.get("z") || 0;
-    const zlevel = model.get("zlevel") || 0;
-    view.eachRendered((el) => {
-      doUpdateZ(el, z, zlevel, -Infinity);
-      return true;
-    });
-  }
-  ;
-  function doUpdateZ(el, z, zlevel, maxZ2) {
-    const label = el.getTextContent();
-    const labelLine = el.getTextGuideLine();
-    const isGroup = el.isGroup;
-    if (isGroup) {
-      const children = el.childrenRef();
-      for (let i = 0; i < children.length; i++) {
-        maxZ2 = Math.max(doUpdateZ(children[i], z, zlevel, maxZ2), maxZ2);
-      }
-    } else {
-      el.z = z;
-      el.zlevel = zlevel;
-      maxZ2 = Math.max(el.z2, maxZ2);
-    }
-    if (label) {
-      label.z = z;
-      label.zlevel = zlevel;
-      isFinite(maxZ2) && (label.z2 = maxZ2 + 2);
-    }
-    if (labelLine) {
-      const textGuideLineConfig = el.textGuideLineConfig;
-      labelLine.z = z;
-      labelLine.zlevel = zlevel;
-      isFinite(maxZ2) && (labelLine.z2 = maxZ2 + (textGuideLineConfig && textGuideLineConfig.showAbove ? 1 : -1));
-    }
-    return maxZ2;
-  }
-  function clearStates(model, view) {
-    view.eachRendered(function(el) {
-      if (isElementRemoved(el)) {
-        return;
-      }
-      const textContent = el.getTextContent();
-      const textGuide = el.getTextGuideLine();
-      if (el.stateTransition) {
-        el.stateTransition = null;
-      }
-      if (textContent && textContent.stateTransition) {
-        textContent.stateTransition = null;
-      }
-      if (textGuide && textGuide.stateTransition) {
-        textGuide.stateTransition = null;
-      }
-      if (el.hasState()) {
-        el.prevStates = el.currentStates;
-        el.clearStates();
-      } else if (el.prevStates) {
-        el.prevStates = null;
-      }
-    });
-  }
-  function updateStates(model, view) {
-    const stateAnimationModel = model.getModel("stateAnimation");
-    const enableAnimation = model.isAnimationEnabled();
-    const duration = stateAnimationModel.get("duration");
-    const stateTransition = duration > 0 ? {
-      duration,
-      delay: stateAnimationModel.get("delay"),
-      easing: stateAnimationModel.get("easing")
-    } : null;
-    view.eachRendered(function(el) {
-      if (el.states && el.states.emphasis) {
-        if (isElementRemoved(el)) {
-          return;
-        }
-        if (el instanceof Path_default) {
-          savePathStates(el);
-        }
-        if (el.__dirty) {
-          const prevStates = el.prevStates;
-          if (prevStates) {
-            el.useStates(prevStates);
-          }
-        }
-        if (enableAnimation) {
-          el.stateTransition = stateTransition;
-          const textContent = el.getTextContent();
-          const textGuide = el.getTextGuideLine();
-          if (textContent) {
-            textContent.stateTransition = stateTransition;
-          }
-          if (textGuide) {
-            textGuide.stateTransition = stateTransition;
-          }
-        }
-        if (el.__dirty) {
-          applyElementStates(el);
-        }
-      }
-    });
-  }
-  ;
-  createExtensionAPI = function(ecIns) {
-    return new class extends ExtensionAPI_default {
-      getCoordinateSystems() {
-        return ecIns._coordSysMgr.getCoordinateSystems();
-      }
-      getComponentByElement(el) {
-        while (el) {
-          const modelInfo = el.__ecComponentInfo;
-          if (modelInfo != null) {
-            return ecIns._model.getComponent(modelInfo.mainType, modelInfo.index);
-          }
-          el = el.parent;
-        }
-      }
-      enterEmphasis(el, highlightDigit) {
-        enterEmphasis(el, highlightDigit);
-        markStatusToUpdate(ecIns);
-      }
-      leaveEmphasis(el, highlightDigit) {
-        leaveEmphasis(el, highlightDigit);
-        markStatusToUpdate(ecIns);
-      }
-      enterBlur(el) {
-        enterBlur(el);
-        markStatusToUpdate(ecIns);
-      }
-      leaveBlur(el) {
-        leaveBlur(el);
-        markStatusToUpdate(ecIns);
-      }
-      enterSelect(el) {
-        enterSelect(el);
-        markStatusToUpdate(ecIns);
-      }
-      leaveSelect(el) {
-        leaveSelect(el);
-        markStatusToUpdate(ecIns);
-      }
-      getModel() {
-        return ecIns.getModel();
-      }
-      getViewOfComponentModel(componentModel) {
-        return ecIns.getViewOfComponentModel(componentModel);
-      }
-      getViewOfSeriesModel(seriesModel) {
-        return ecIns.getViewOfSeriesModel(seriesModel);
-      }
-    }(ecIns);
-  };
-  enableConnect = function(chart) {
-    function updateConnectedChartsStatus(charts, status) {
-      for (let i = 0; i < charts.length; i++) {
-        const otherChart = charts[i];
-        otherChart[CONNECT_STATUS_KEY] = status;
-      }
-    }
-    each(eventActionMap, function(actionType, eventType) {
-      chart._messageCenter.on(eventType, function(event) {
-        if (connectedGroups[chart.group] && chart[CONNECT_STATUS_KEY] !== CONNECT_STATUS_PENDING) {
-          if (event && event.escapeConnect) {
+        };
+
+        renderComponents = function (ecIns, ecModel, api, payload, updateParams, dirtyList) {
+          each(dirtyList || ecIns._componentsViews, function (componentView) {
+            var componentModel = componentView.__model;
+            clearStates(componentModel, componentView);
+            componentView.render(componentModel, ecModel, api, payload);
+            updateZ(componentModel, componentView);
+            updateStates(componentModel, componentView);
+          });
+        };
+        /**
+         * Render each chart and component
+         */
+
+
+        renderSeries = function (ecIns, ecModel, api, payload, updateParams, dirtyMap) {
+          // Render all charts
+          var scheduler = ecIns._scheduler;
+          updateParams = extend(updateParams || {}, {
+            updatedSeries: ecModel.getSeries()
+          }); // TODO progressive?
+
+          lifecycle.trigger('series:beforeupdate', ecModel, api, updateParams);
+          var unfinished = false;
+          ecModel.eachSeries(function (seriesModel) {
+            var chartView = ecIns._chartsMap[seriesModel.__viewId];
+            chartView.__alive = true;
+            var renderTask = chartView.renderTask;
+            scheduler.updatePayload(renderTask, payload); // TODO states on marker.
+
+            clearStates(seriesModel, chartView);
+
+            if (dirtyMap && dirtyMap.get(seriesModel.uid)) {
+              renderTask.dirty();
+            }
+
+            if (renderTask.perform(scheduler.getPerformArgs(renderTask))) {
+              unfinished = true;
+            }
+
+            chartView.group.silent = !!seriesModel.get('silent'); // Should not call markRedraw on group, because it will disable zrender
+            // increamental render (alway render from the __startIndex each frame)
+            // chartView.group.markRedraw();
+
+            updateBlend(seriesModel, chartView);
+            updateSeriesElementSelection(seriesModel);
+          });
+          scheduler.unfinished = unfinished || scheduler.unfinished;
+          lifecycle.trigger('series:layoutlabels', ecModel, api, updateParams); // transition after label is layouted.
+
+          lifecycle.trigger('series:transition', ecModel, api, updateParams);
+          ecModel.eachSeries(function (seriesModel) {
+            var chartView = ecIns._chartsMap[seriesModel.__viewId]; // Update Z after labels updated. Before applying states.
+
+            updateZ(seriesModel, chartView); // NOTE: Update states after label is updated.
+            // label should be in normal status when layouting.
+
+            updateStates(seriesModel, chartView);
+          }); // If use hover layer
+
+          updateHoverLayerStatus(ecIns, ecModel);
+          lifecycle.trigger('series:afterupdate', ecModel, api, updateParams);
+        };
+
+        markStatusToUpdate = function (ecIns) {
+          ecIns[STATUS_NEEDS_UPDATE_KEY] = true; // Wake up zrender if it's sleep. Let it update states in the next frame.
+
+          ecIns.getZr().wakeUp();
+        };
+
+        applyChangedStates = function (ecIns) {
+          if (!ecIns[STATUS_NEEDS_UPDATE_KEY]) {
             return;
           }
-          const action = chart.makeActionFromEvent(event);
-          const otherCharts = [];
-          each(instances2, function(otherChart) {
-            if (otherChart !== chart && otherChart.group === chart.group) {
-              otherCharts.push(otherChart);
+
+          ecIns.getZr().storage.traverse(function (el) {
+            // Not applied on removed elements, it may still in fading.
+            if (isElementRemoved(el)) {
+              return;
             }
+
+            applyElementStates(el);
           });
-          updateConnectedChartsStatus(otherCharts, CONNECT_STATUS_PENDING);
-          each(otherCharts, function(otherChart) {
-            if (otherChart[CONNECT_STATUS_KEY] !== CONNECT_STATUS_UPDATING) {
-              otherChart.dispatchAction(action);
+          ecIns[STATUS_NEEDS_UPDATE_KEY] = false;
+        };
+
+        function applyElementStates(el) {
+          var newStates = [];
+          var oldStates = el.currentStates; // Keep other states.
+
+          for (var i = 0; i < oldStates.length; i++) {
+            var stateName = oldStates[i];
+
+            if (!(stateName === 'emphasis' || stateName === 'blur' || stateName === 'select')) {
+              newStates.push(stateName);
             }
-          });
-          updateConnectedChartsStatus(otherCharts, CONNECT_STATUS_UPDATED);
+          } // Only use states when it's exists.
+
+
+          if (el.selected && el.states.select) {
+            newStates.push('select');
+          }
+
+          if (el.hoverState === HOVER_STATE_EMPHASIS && el.states.emphasis) {
+            newStates.push('emphasis');
+          } else if (el.hoverState === HOVER_STATE_BLUR && el.states.blur) {
+            newStates.push('blur');
+          }
+
+          el.useStates(newStates);
         }
+
+        function updateHoverLayerStatus(ecIns, ecModel) {
+          var zr = ecIns._zr;
+          var storage = zr.storage;
+          var elCount = 0;
+          storage.traverse(function (el) {
+            if (!el.isGroup) {
+              elCount++;
+            }
+          });
+
+          if (elCount > ecModel.get('hoverLayerThreshold') && !env.node && !env.worker) {
+            ecModel.eachSeries(function (seriesModel) {
+              if (seriesModel.preventUsingHoverLayer) {
+                return;
+              }
+
+              var chartView = ecIns._chartsMap[seriesModel.__viewId];
+
+              if (chartView.__alive) {
+                chartView.eachRendered(function (el) {
+                  if (el.states.emphasis) {
+                    el.states.emphasis.hoverLayer = true;
+                  }
+                });
+              }
+            });
+          }
+        }
+        /**
+         * Update chart and blend.
+         */
+
+        function updateBlend(seriesModel, chartView) {
+          var blendMode = seriesModel.get('blendMode') || null;
+          chartView.eachRendered(function (el) {
+            // FIXME marker and other components
+            if (!el.isGroup) {
+              // DONT mark the element dirty. In case element is incremental and don't wan't to rerender.
+              el.style.blend = blendMode;
+            }
+          });
+        }
+
+        function updateZ(model, view) {
+          if (model.preventAutoZ) {
+            return;
+          }
+
+          var z = model.get('z') || 0;
+          var zlevel = model.get('zlevel') || 0; // Set z and zlevel
+
+          view.eachRendered(function (el) {
+            doUpdateZ(el, z, zlevel, -Infinity); // Don't traverse the children because it has been traversed in _updateZ.
+
+            return true;
+          });
+        }
+
+        function doUpdateZ(el, z, zlevel, maxZ2) {
+          // Group may also have textContent
+          var label = el.getTextContent();
+          var labelLine = el.getTextGuideLine();
+          var isGroup = el.isGroup;
+
+          if (isGroup) {
+            // set z & zlevel of children elements of Group
+            var children = el.childrenRef();
+
+            for (var i = 0; i < children.length; i++) {
+              maxZ2 = Math.max(doUpdateZ(children[i], z, zlevel, maxZ2), maxZ2);
+            }
+          } else {
+            // not Group
+            el.z = z;
+            el.zlevel = zlevel;
+            maxZ2 = Math.max(el.z2, maxZ2);
+          } // always set z and zlevel if label/labelLine exists
+
+
+          if (label) {
+            label.z = z;
+            label.zlevel = zlevel; // lift z2 of text content
+            // TODO if el.emphasis.z2 is spcefied, what about textContent.
+
+            isFinite(maxZ2) && (label.z2 = maxZ2 + 2);
+          }
+
+          if (labelLine) {
+            var textGuideLineConfig = el.textGuideLineConfig;
+            labelLine.z = z;
+            labelLine.zlevel = zlevel;
+            isFinite(maxZ2) && (labelLine.z2 = maxZ2 + (textGuideLineConfig && textGuideLineConfig.showAbove ? 1 : -1));
+          }
+
+          return maxZ2;
+        } // Clear states without animation.
+        // TODO States on component.
+
+
+        function clearStates(model, view) {
+          view.eachRendered(function (el) {
+            // Not applied on removed elements, it may still in fading.
+            if (isElementRemoved(el)) {
+              return;
+            }
+
+            var textContent = el.getTextContent();
+            var textGuide = el.getTextGuideLine();
+
+            if (el.stateTransition) {
+              el.stateTransition = null;
+            }
+
+            if (textContent && textContent.stateTransition) {
+              textContent.stateTransition = null;
+            }
+
+            if (textGuide && textGuide.stateTransition) {
+              textGuide.stateTransition = null;
+            } // TODO If el is incremental.
+
+
+            if (el.hasState()) {
+              el.prevStates = el.currentStates;
+              el.clearStates();
+            } else if (el.prevStates) {
+              el.prevStates = null;
+            }
+          });
+        }
+
+        function updateStates(model, view) {
+          var stateAnimationModel = model.getModel('stateAnimation');
+          var enableAnimation = model.isAnimationEnabled();
+          var duration = stateAnimationModel.get('duration');
+          var stateTransition = duration > 0 ? {
+            duration: duration,
+            delay: stateAnimationModel.get('delay'),
+            easing: stateAnimationModel.get('easing') // additive: stateAnimationModel.get('additive')
+
+          } : null;
+          view.eachRendered(function (el) {
+            if (el.states && el.states.emphasis) {
+              // Not applied on removed elements, it may still in fading.
+              if (isElementRemoved(el)) {
+                return;
+              }
+
+              if (el instanceof Path) {
+                savePathStates(el);
+              } // Only updated on changed element. In case element is incremental and don't wan't to rerender.
+              // TODO, a more proper way?
+
+
+              if (el.__dirty) {
+                var prevStates = el.prevStates; // Restore states without animation
+
+                if (prevStates) {
+                  el.useStates(prevStates);
+                }
+              } // Update state transition and enable animation again.
+
+
+              if (enableAnimation) {
+                el.stateTransition = stateTransition;
+                var textContent = el.getTextContent();
+                var textGuide = el.getTextGuideLine(); // TODO Is it necessary to animate label?
+
+                if (textContent) {
+                  textContent.stateTransition = stateTransition;
+                }
+
+                if (textGuide) {
+                  textGuide.stateTransition = stateTransition;
+                }
+              } // The use higlighted and selected flag to toggle states.
+
+
+              if (el.__dirty) {
+                applyElementStates(el);
+              }
+            }
+          });
+        }
+
+        createExtensionAPI = function (ecIns) {
+          return new (
+          /** @class */
+          function (_super) {
+            __extends(class_1, _super);
+
+            function class_1() {
+              return _super !== null && _super.apply(this, arguments) || this;
+            }
+
+            class_1.prototype.getCoordinateSystems = function () {
+              return ecIns._coordSysMgr.getCoordinateSystems();
+            };
+
+            class_1.prototype.getComponentByElement = function (el) {
+              while (el) {
+                var modelInfo = el.__ecComponentInfo;
+
+                if (modelInfo != null) {
+                  return ecIns._model.getComponent(modelInfo.mainType, modelInfo.index);
+                }
+
+                el = el.parent;
+              }
+            };
+
+            class_1.prototype.enterEmphasis = function (el, highlightDigit) {
+              enterEmphasis(el, highlightDigit);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.leaveEmphasis = function (el, highlightDigit) {
+              leaveEmphasis(el, highlightDigit);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.enterBlur = function (el) {
+              enterBlur(el);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.leaveBlur = function (el) {
+              leaveBlur(el);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.enterSelect = function (el) {
+              enterSelect(el);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.leaveSelect = function (el) {
+              leaveSelect(el);
+              markStatusToUpdate(ecIns);
+            };
+
+            class_1.prototype.getModel = function () {
+              return ecIns.getModel();
+            };
+
+            class_1.prototype.getViewOfComponentModel = function (componentModel) {
+              return ecIns.getViewOfComponentModel(componentModel);
+            };
+
+            class_1.prototype.getViewOfSeriesModel = function (seriesModel) {
+              return ecIns.getViewOfSeriesModel(seriesModel);
+            };
+
+            return class_1;
+          }(ExtensionAPI))(ecIns);
+        };
+
+        enableConnect = function (chart) {
+          function updateConnectedChartsStatus(charts, status) {
+            for (var i = 0; i < charts.length; i++) {
+              var otherChart = charts[i];
+              otherChart[CONNECT_STATUS_KEY] = status;
+            }
+          }
+
+          each(eventActionMap, function (actionType, eventType) {
+            chart._messageCenter.on(eventType, function (event) {
+              if (connectedGroups[chart.group] && chart[CONNECT_STATUS_KEY] !== CONNECT_STATUS_PENDING) {
+                if (event && event.escapeConnect) {
+                  return;
+                }
+
+                var action_1 = chart.makeActionFromEvent(event);
+                var otherCharts_1 = [];
+                each(instances$1, function (otherChart) {
+                  if (otherChart !== chart && otherChart.group === chart.group) {
+                    otherCharts_1.push(otherChart);
+                  }
+                });
+                updateConnectedChartsStatus(otherCharts_1, CONNECT_STATUS_PENDING);
+                each(otherCharts_1, function (otherChart) {
+                  if (otherChart[CONNECT_STATUS_KEY] !== CONNECT_STATUS_UPDATING) {
+                    otherChart.dispatchAction(action_1);
+                  }
+                });
+                updateConnectedChartsStatus(otherCharts_1, CONNECT_STATUS_UPDATED);
+              }
+            });
+          });
+        };
+      }();
+
+      return ECharts;
+    }(Eventful);
+
+    var echartsProto = ECharts.prototype;
+    echartsProto.on = createRegisterEventWithLowercaseECharts('on');
+    echartsProto.off = createRegisterEventWithLowercaseECharts('off');
+    /**
+     * @deprecated
+     */
+    // @ts-ignore
+
+    echartsProto.one = function (eventName, cb, ctx) {
+      var self = this;
+      deprecateLog('ECharts#one is deprecated.');
+
+      function wrapped() {
+        var args2 = [];
+
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args2[_i] = arguments[_i];
+        }
+
+        cb && cb.apply && cb.apply(this, args2); // @ts-ignore
+
+        self.off(eventName, wrapped);
+      }
+
+      this.on.call(this, eventName, wrapped, ctx);
+    };
+
+    var MOUSE_EVENT_NAMES = ['click', 'dblclick', 'mouseover', 'mouseout', 'mousemove', 'mousedown', 'mouseup', 'globalout', 'contextmenu'];
+
+    function disposedWarning(id) {
+      if ("development" !== 'production') {
+        console.warn('Instance ' + id + ' has been disposed');
+      }
+    }
+
+    var actions = {};
+    /**
+     * Map eventType to actionType
+     */
+
+    var eventActionMap = {};
+    var dataProcessorFuncs = [];
+    var optionPreprocessorFuncs = [];
+    var visualFuncs = [];
+    var themeStorage = {};
+    var loadingEffects = {};
+    var instances$1 = {};
+    var connectedGroups = {};
+    var idBase = +new Date() - 0;
+    var groupIdBase = +new Date() - 0;
+    var DOM_ATTRIBUTE_KEY = '_echarts_instance_';
+    /**
+     * @param opts.devicePixelRatio Use window.devicePixelRatio by default
+     * @param opts.renderer Can choose 'canvas' or 'svg' to render the chart.
+     * @param opts.width Use clientWidth of the input `dom` by default.
+     *        Can be 'auto' (the same as null/undefined)
+     * @param opts.height Use clientHeight of the input `dom` by default.
+     *        Can be 'auto' (the same as null/undefined)
+     * @param opts.locale Specify the locale.
+     * @param opts.useDirtyRect Enable dirty rectangle rendering or not.
+     */
+
+    function init$1(dom, theme, opts) {
+      var isClient = !(opts && opts.ssr);
+
+      if (isClient) {
+        if ("development" !== 'production') {
+          if (!dom) {
+            throw new Error('Initialize failed: invalid dom.');
+          }
+        }
+
+        var existInstance = getInstanceByDom(dom);
+
+        if (existInstance) {
+          if ("development" !== 'production') {
+            console.warn('There is a chart instance already initialized on the dom.');
+          }
+
+          return existInstance;
+        }
+
+        if ("development" !== 'production') {
+          if (isDom(dom) && dom.nodeName.toUpperCase() !== 'CANVAS' && (!dom.clientWidth && (!opts || opts.width == null) || !dom.clientHeight && (!opts || opts.height == null))) {
+            console.warn('Can\'t get DOM width or height. Please check ' + 'dom.clientWidth and dom.clientHeight. They should not be 0.' + 'For example, you may need to call this in the callback ' + 'of window.onload.');
+          }
+        }
+      }
+
+      var chart = new ECharts(dom, theme, opts);
+      chart.id = 'ec_' + idBase++;
+      instances$1[chart.id] = chart;
+      isClient && setAttribute(dom, DOM_ATTRIBUTE_KEY, chart.id);
+      enableConnect(chart);
+      lifecycle.trigger('afterinit', chart);
+      return chart;
+    }
+    /**
+     * @usage
+     * (A)
+     * ```js
+     * let chart1 = echarts.init(dom1);
+     * let chart2 = echarts.init(dom2);
+     * chart1.group = 'xxx';
+     * chart2.group = 'xxx';
+     * echarts.connect('xxx');
+     * ```
+     * (B)
+     * ```js
+     * let chart1 = echarts.init(dom1);
+     * let chart2 = echarts.init(dom2);
+     * echarts.connect('xxx', [chart1, chart2]);
+     * ```
+     */
+
+    function connect(groupId) {
+      // Is array of charts
+      if (isArray(groupId)) {
+        var charts = groupId;
+        groupId = null; // If any chart has group
+
+        each(charts, function (chart) {
+          if (chart.group != null) {
+            groupId = chart.group;
+          }
+        });
+        groupId = groupId || 'g_' + groupIdBase++;
+        each(charts, function (chart) {
+          chart.group = groupId;
+        });
+      }
+
+      connectedGroups[groupId] = true;
+      return groupId;
+    }
+    /**
+     * @deprecated
+     */
+
+    function disConnect(groupId) {
+      connectedGroups[groupId] = false;
+    }
+    /**
+     * Alias and backword compat
+     */
+
+    var disconnect = disConnect;
+    /**
+     * Dispose a chart instance
+     */
+
+    function dispose$1(chart) {
+      if (isString(chart)) {
+        chart = instances$1[chart];
+      } else if (!(chart instanceof ECharts)) {
+        // Try to treat as dom
+        chart = getInstanceByDom(chart);
+      }
+
+      if (chart instanceof ECharts && !chart.isDisposed()) {
+        chart.dispose();
+      }
+    }
+    function getInstanceByDom(dom) {
+      return instances$1[getAttribute(dom, DOM_ATTRIBUTE_KEY)];
+    }
+    function getInstanceById(key) {
+      return instances$1[key];
+    }
+    /**
+     * Register theme
+     */
+
+    function registerTheme(name, theme) {
+      themeStorage[name] = theme;
+    }
+    /**
+     * Register option preprocessor
+     */
+
+    function registerPreprocessor(preprocessorFunc) {
+      if (indexOf(optionPreprocessorFuncs, preprocessorFunc) < 0) {
+        optionPreprocessorFuncs.push(preprocessorFunc);
+      }
+    }
+    function registerProcessor(priority, processor) {
+      normalizeRegister(dataProcessorFuncs, priority, processor, PRIORITY_PROCESSOR_DEFAULT);
+    }
+    /**
+     * Register postIniter
+     * @param {Function} postInitFunc
+     */
+
+    function registerPostInit(postInitFunc) {
+      registerUpdateLifecycle('afterinit', postInitFunc);
+    }
+    /**
+     * Register postUpdater
+     * @param {Function} postUpdateFunc
+     */
+
+    function registerPostUpdate(postUpdateFunc) {
+      registerUpdateLifecycle('afterupdate', postUpdateFunc);
+    }
+    function registerUpdateLifecycle(name, cb) {
+      lifecycle.on(name, cb);
+    }
+    function registerAction(actionInfo, eventName, action) {
+      if (isFunction(eventName)) {
+        action = eventName;
+        eventName = '';
+      }
+
+      var actionType = isObject(actionInfo) ? actionInfo.type : [actionInfo, actionInfo = {
+        event: eventName
+      }][0]; // Event name is all lowercase
+
+      actionInfo.event = (actionInfo.event || actionType).toLowerCase();
+      eventName = actionInfo.event;
+
+      if (eventActionMap[eventName]) {
+        // Already registered.
+        return;
+      } // Validate action type and event name.
+
+
+      assert(ACTION_REG.test(actionType) && ACTION_REG.test(eventName));
+
+      if (!actions[actionType]) {
+        actions[actionType] = {
+          action: action,
+          actionInfo: actionInfo
+        };
+      }
+
+      eventActionMap[eventName] = actionType;
+    }
+    function registerCoordinateSystem(type, coordSysCreator) {
+      CoordinateSystemManager.register(type, coordSysCreator);
+    }
+    /**
+     * Get dimensions of specified coordinate system.
+     * @param {string} type
+     * @return {Array.<string|Object>}
+     */
+
+    function getCoordinateSystemDimensions(type) {
+      var coordSysCreator = CoordinateSystemManager.get(type);
+
+      if (coordSysCreator) {
+        return coordSysCreator.getDimensionsInfo ? coordSysCreator.getDimensionsInfo() : coordSysCreator.dimensions.slice();
+      }
+    }
+
+    function registerLayout(priority, layoutTask) {
+      normalizeRegister(visualFuncs, priority, layoutTask, PRIORITY_VISUAL_LAYOUT, 'layout');
+    }
+
+    function registerVisual(priority, visualTask) {
+      normalizeRegister(visualFuncs, priority, visualTask, PRIORITY_VISUAL_CHART, 'visual');
+    }
+    var registeredTasks = [];
+
+    function normalizeRegister(targetList, priority, fn, defaultPriority, visualType) {
+      if (isFunction(priority) || isObject(priority)) {
+        fn = priority;
+        priority = defaultPriority;
+      }
+
+      if ("development" !== 'production') {
+        if (isNaN(priority) || priority == null) {
+          throw new Error('Illegal priority');
+        } // Check duplicate
+
+
+        each(targetList, function (wrap) {
+          assert(wrap.__raw !== fn);
+        });
+      } // Already registered
+
+
+      if (indexOf(registeredTasks, fn) >= 0) {
+        return;
+      }
+
+      registeredTasks.push(fn);
+      var stageHandler = Scheduler.wrapStageHandler(fn, visualType);
+      stageHandler.__prio = priority;
+      stageHandler.__raw = fn;
+      targetList.push(stageHandler);
+    }
+
+    function registerLoading(name, loadingFx) {
+      loadingEffects[name] = loadingFx;
+    }
+    /**
+     * ZRender need a canvas context to do measureText.
+     * But in node environment canvas may be created by node-canvas.
+     * So we need to specify how to create a canvas instead of using document.createElement('canvas')
+     *
+     *
+     * @deprecated use setPlatformAPI({ createCanvas }) instead.
+     *
+     * @example
+     *     let Canvas = require('canvas');
+     *     let echarts = require('echarts');
+     *     echarts.setCanvasCreator(function () {
+     *         // Small size is enough.
+     *         return new Canvas(32, 32);
+     *     });
+     */
+
+    function setCanvasCreator(creator) {
+      if ("development" !== 'production') {
+        deprecateLog('setCanvasCreator is deprecated. Use setPlatformAPI({ createCanvas }) instead.');
+      }
+
+      setPlatformAPI({
+        createCanvas: creator
       });
-    });
-  };
-}();
-var echartsProto = ECharts.prototype;
-echartsProto.on = createRegisterEventWithLowercaseECharts("on");
-echartsProto.off = createRegisterEventWithLowercaseECharts("off");
-echartsProto.one = function(eventName, cb, ctx) {
-  const self2 = this;
-  deprecateLog("ECharts#one is deprecated.");
-  function wrapped(...args2) {
-    cb && cb.apply && cb.apply(this, args2);
-    self2.off(eventName, wrapped);
-  }
-  ;
-  this.on.call(this, eventName, wrapped, ctx);
-};
-var MOUSE_EVENT_NAMES = [
-  "click",
-  "dblclick",
-  "mouseover",
-  "mouseout",
-  "mousemove",
-  "mousedown",
-  "mouseup",
-  "globalout",
-  "contextmenu"
-];
-function disposedWarning(id) {
-  if (true) {
-    warn("Instance " + id + " has been disposed");
-  }
-}
-var actions = {};
-var eventActionMap = {};
-var dataProcessorFuncs = [];
-var optionPreprocessorFuncs = [];
-var visualFuncs = [];
-var themeStorage = {};
-var loadingEffects = {};
-var instances2 = {};
-var connectedGroups = {};
-var idBase = +new Date() - 0;
-var groupIdBase = +new Date() - 0;
-var DOM_ATTRIBUTE_KEY = "_echarts_instance_";
-function init2(dom, theme2, opts) {
-  const isClient = !(opts && opts.ssr);
-  if (isClient) {
-    if (true) {
-      if (!dom) {
-        throw new Error("Initialize failed: invalid dom.");
-      }
     }
-    const existInstance = getInstanceByDom(dom);
-    if (existInstance) {
-      if (true) {
-        warn("There is a chart instance already initialized on the dom.");
-      }
-      return existInstance;
+    /**
+     * The parameters and usage: see `geoSourceManager.registerMap`.
+     * Compatible with previous `echarts.registerMap`.
+     */
+
+    function registerMap(mapName, geoJson, specialAreas) {
+      var registerMap = getImpl('registerMap');
+      registerMap && registerMap(mapName, geoJson, specialAreas);
     }
-    if (true) {
-      if (isDom(dom) && dom.nodeName.toUpperCase() !== "CANVAS" && (!dom.clientWidth && (!opts || opts.width == null) || !dom.clientHeight && (!opts || opts.height == null))) {
-        warn("Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.");
-      }
+    function getMap(mapName) {
+      var getMap = getImpl('getMap');
+      return getMap && getMap(mapName);
     }
-  }
-  const chart = new ECharts(dom, theme2, opts);
-  chart.id = "ec_" + idBase++;
-  instances2[chart.id] = chart;
-  isClient && setAttribute(dom, DOM_ATTRIBUTE_KEY, chart.id);
-  enableConnect(chart);
-  lifecycle_default.trigger("afterinit", chart);
-  return chart;
-}
-function connect(groupId) {
-  if (isArray(groupId)) {
-    const charts = groupId;
-    groupId = null;
-    each(charts, function(chart) {
-      if (chart.group != null) {
-        groupId = chart.group;
-      }
-    });
-    groupId = groupId || "g_" + groupIdBase++;
-    each(charts, function(chart) {
-      chart.group = groupId;
-    });
-  }
-  connectedGroups[groupId] = true;
-  return groupId;
-}
-function disConnect(groupId) {
-  connectedGroups[groupId] = false;
-}
-var disconnect = disConnect;
-function dispose2(chart) {
-  if (isString(chart)) {
-    chart = instances2[chart];
-  } else if (!(chart instanceof ECharts)) {
-    chart = getInstanceByDom(chart);
-  }
-  if (chart instanceof ECharts && !chart.isDisposed()) {
-    chart.dispose();
-  }
-}
-function getInstanceByDom(dom) {
-  return instances2[getAttribute(dom, DOM_ATTRIBUTE_KEY)];
-}
-function getInstanceById(key) {
-  return instances2[key];
-}
-function registerTheme(name, theme2) {
-  themeStorage[name] = theme2;
-}
-function registerPreprocessor(preprocessorFunc) {
-  if (indexOf(optionPreprocessorFuncs, preprocessorFunc) < 0) {
-    optionPreprocessorFuncs.push(preprocessorFunc);
-  }
-}
-function registerProcessor(priority, processor) {
-  normalizeRegister(dataProcessorFuncs, priority, processor, PRIORITY_PROCESSOR_DEFAULT);
-}
-function registerPostInit(postInitFunc) {
-  registerUpdateLifecycle("afterinit", postInitFunc);
-}
-function registerPostUpdate(postUpdateFunc) {
-  registerUpdateLifecycle("afterupdate", postUpdateFunc);
-}
-function registerUpdateLifecycle(name, cb) {
-  lifecycle_default.on(name, cb);
-}
-function registerAction(actionInfo3, eventName, action) {
-  if (isFunction(eventName)) {
-    action = eventName;
-    eventName = "";
-  }
-  const actionType = isObject(actionInfo3) ? actionInfo3.type : [actionInfo3, actionInfo3 = {
-    event: eventName
-  }][0];
-  actionInfo3.event = (actionInfo3.event || actionType).toLowerCase();
-  eventName = actionInfo3.event;
-  if (eventActionMap[eventName]) {
-    return;
-  }
-  assert(ACTION_REG.test(actionType) && ACTION_REG.test(eventName));
-  if (!actions[actionType]) {
-    actions[actionType] = {action, actionInfo: actionInfo3};
-  }
-  eventActionMap[eventName] = actionType;
-}
-function registerCoordinateSystem(type, coordSysCreator) {
-  CoordinateSystem_default.register(type, coordSysCreator);
-}
-function getCoordinateSystemDimensions(type) {
-  const coordSysCreator = CoordinateSystem_default.get(type);
-  if (coordSysCreator) {
-    return coordSysCreator.getDimensionsInfo ? coordSysCreator.getDimensionsInfo() : coordSysCreator.dimensions.slice();
-  }
-}
-function registerLayout(priority, layoutTask) {
-  normalizeRegister(visualFuncs, priority, layoutTask, PRIORITY_VISUAL_LAYOUT, "layout");
-}
-function registerVisual(priority, visualTask) {
-  normalizeRegister(visualFuncs, priority, visualTask, PRIORITY_VISUAL_CHART, "visual");
-}
-var registeredTasks = [];
-function normalizeRegister(targetList, priority, fn, defaultPriority, visualType) {
-  if (isFunction(priority) || isObject(priority)) {
-    fn = priority;
-    priority = defaultPriority;
-  }
-  if (true) {
-    if (isNaN(priority) || priority == null) {
-      throw new Error("Illegal priority");
-    }
-    each(targetList, function(wrap) {
-      assert(wrap.__raw !== fn);
-    });
-  }
-  if (indexOf(registeredTasks, fn) >= 0) {
-    return;
-  }
-  registeredTasks.push(fn);
-  const stageHandler = Scheduler_default.wrapStageHandler(fn, visualType);
-  stageHandler.__prio = priority;
-  stageHandler.__raw = fn;
-  targetList.push(stageHandler);
-}
-function registerLoading(name, loadingFx) {
-  loadingEffects[name] = loadingFx;
-}
-function setCanvasCreator(creator) {
-  if (true) {
-    deprecateLog("setCanvasCreator is deprecated. Use setPlatformAPI({ createCanvas }) instead.");
-  }
-  setPlatformAPI({
-    createCanvas: creator
-  });
-}
-function registerMap(mapName, geoJson, specialAreas) {
-  const registerMap3 = getImpl("registerMap");
-  registerMap3 && registerMap3(mapName, geoJson, specialAreas);
-}
-function getMap(mapName) {
-  const getMap2 = getImpl("getMap");
-  return getMap2 && getMap2(mapName);
-}
-var registerTransform = registerExternalTransform;
-registerVisual(PRIORITY_VISUAL_GLOBAL, seriesStyleTask);
-registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataStyleTask);
-registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataColorPaletteTask);
-registerVisual(PRIORITY_VISUAL_GLOBAL, seriesSymbolTask);
-registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataSymbolTask);
-registerVisual(PRIORITY_VISUAL_DECAL, decalVisual);
-registerPreprocessor(globalBackwardCompat);
-registerProcessor(PRIORITY_PROCESSOR_DATASTACK, dataStack);
-registerLoading("default", defaultLoading);
-registerAction({
-  type: HIGHLIGHT_ACTION_TYPE,
-  event: HIGHLIGHT_ACTION_TYPE,
-  update: HIGHLIGHT_ACTION_TYPE
-}, noop);
-registerAction({
-  type: DOWNPLAY_ACTION_TYPE,
-  event: DOWNPLAY_ACTION_TYPE,
-  update: DOWNPLAY_ACTION_TYPE
-}, noop);
-registerAction({
-  type: SELECT_ACTION_TYPE,
-  event: SELECT_ACTION_TYPE,
-  update: SELECT_ACTION_TYPE
-}, noop);
-registerAction({
-  type: UNSELECT_ACTION_TYPE,
-  event: UNSELECT_ACTION_TYPE,
-  update: UNSELECT_ACTION_TYPE
-}, noop);
-registerAction({
-  type: TOGGLE_SELECT_ACTION_TYPE,
-  event: TOGGLE_SELECT_ACTION_TYPE,
-  update: TOGGLE_SELECT_ACTION_TYPE
-}, noop);
-registerTheme("light", light_default);
-registerTheme("dark", dark_default);
-var dataTool = {};
+    var registerTransform = registerExternalTransform;
+    /**
+     * Globa dispatchAction to a specified chart instance.
+     */
+    // export function dispatchAction(payload: { chartId: string } & Payload, opt?: Parameters<ECharts['dispatchAction']>[1]) {
+    //     if (!payload || !payload.chartId) {
+    //         // Must have chartId to find chart
+    //         return;
+    //     }
+    //     const chart = instances[payload.chartId];
+    //     if (chart) {
+    //         chart.dispatchAction(payload, opt);
+    //     }
+    // }
+    // Buitlin global visual
+
+    registerVisual(PRIORITY_VISUAL_GLOBAL, seriesStyleTask);
+    registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataStyleTask);
+    registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataColorPaletteTask);
+    registerVisual(PRIORITY_VISUAL_GLOBAL, seriesSymbolTask);
+    registerVisual(PRIORITY_VISUAL_CHART_DATA_CUSTOM, dataSymbolTask);
+    registerVisual(PRIORITY_VISUAL_DECAL, decalVisual);
+    registerPreprocessor(globalBackwardCompat);
+    registerProcessor(PRIORITY_PROCESSOR_DATASTACK, dataStack);
+    registerLoading('default', defaultLoading); // Default actions
+
+    registerAction({
+      type: HIGHLIGHT_ACTION_TYPE,
+      event: HIGHLIGHT_ACTION_TYPE,
+      update: HIGHLIGHT_ACTION_TYPE
+    }, noop);
+    registerAction({
+      type: DOWNPLAY_ACTION_TYPE,
+      event: DOWNPLAY_ACTION_TYPE,
+      update: DOWNPLAY_ACTION_TYPE
+    }, noop);
+    registerAction({
+      type: SELECT_ACTION_TYPE,
+      event: SELECT_ACTION_TYPE,
+      update: SELECT_ACTION_TYPE
+    }, noop);
+    registerAction({
+      type: UNSELECT_ACTION_TYPE,
+      event: UNSELECT_ACTION_TYPE,
+      update: UNSELECT_ACTION_TYPE
+    }, noop);
+    registerAction({
+      type: TOGGLE_SELECT_ACTION_TYPE,
+      event: TOGGLE_SELECT_ACTION_TYPE,
+      update: TOGGLE_SELECT_ACTION_TYPE
+    }, noop); // Default theme
+
+    registerTheme('light', lightTheme);
+    registerTheme('dark', theme); // For backward compatibility, where the namespace `dataTool` will
+    // be mounted on `echarts` is the extension `dataTool` is imported.
+
+    var dataTool = {};
 
 // src/extension.ts
 var extensions = [];
@@ -45913,496 +46711,661 @@ function adjustEdge(graph, scale4) {
   });
 }
 
-// src/chart/graph/GraphView.ts
-function isViewCoordSys(coordSys) {
-  return coordSys.type === "view";
-}
-var GraphView2 = class extends Chart_default {
-  constructor() {
-    super(...arguments);
-    this.type = GraphView2.type;
-  }
-  init(ecModel, api2) {
-    const symbolDraw = new SymbolDraw_default();
-    const lineDraw = new LineDraw_default();
-    const group = this.group;
-    this._controller = new RoamController_default(api2.getZr());
-    this._controllerHost = {
-      target: group
-    };
-    group.add(symbolDraw.group);
-    group.add(lineDraw.group);
-    this._symbolDraw = symbolDraw;
-    this._lineDraw = lineDraw;
-    this._firstRender = true;
-  }
-  render(seriesModel, ecModel, api2) {
-    const coordSys = seriesModel.coordinateSystem;
-    this._model = seriesModel;
-    const symbolDraw = this._symbolDraw;
-    const lineDraw = this._lineDraw;
-    const group = this.group;
-    if (isViewCoordSys(coordSys)) {
-      const groupNewProp = {
-        x: coordSys.x,
-        y: coordSys.y,
-        scaleX: coordSys.scaleX,
-        scaleY: coordSys.scaleY
+    function isViewCoordSys(coordSys) {
+      return coordSys.type === 'view';
+    }
+
+    var GraphView =
+    /** @class */
+    function (_super) {
+      __extends(GraphView, _super);
+
+      function GraphView() {
+        var _this = _super !== null && _super.apply(this, arguments) || this;
+
+        _this.type = GraphView.type;
+        return _this;
+      }
+
+      GraphView.prototype.init = function (ecModel, api) {
+        var symbolDraw = new SymbolDraw();
+        var lineDraw = new LineDraw();
+        var group = this.group;
+        this._controller = new RoamController(api.getZr());
+        this._controllerHost = {
+          target: group
+        };
+        group.add(symbolDraw.group);
+        group.add(lineDraw.group);
+        this._symbolDraw = symbolDraw;
+        this._lineDraw = lineDraw;
+        this._firstRender = true;
       };
-      if (this._firstRender) {
-        group.attr(groupNewProp);
-      } else {
-        updateProps(group, groupNewProp, seriesModel);
-      }
-    }
-    adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
-    const data = seriesModel.getData();
-    symbolDraw.updateData(data);
-    const edgeData = seriesModel.getEdgeData();
-    lineDraw.updateData(edgeData);
-    this._updateNodeAndLinkScale();
-    this._updateController(seriesModel, ecModel, api2);
-    clearTimeout(this._layoutTimeout);
-    const forceLayout2 = seriesModel.forceLayout;
-    const layoutAnimation = seriesModel.get(["force", "layoutAnimation"]);
-    if (forceLayout2) {
-      this._startForceLayoutIteration(forceLayout2, layoutAnimation);
-    }
-    const layout18 = seriesModel.get("layout");
-    data.graph.eachNode((node) => {
-      const idx = node.dataIndex;
-      const el = node.getGraphicEl();
-      const itemModel = node.getModel();
-      console.log("node and el:", node, el);
-      if (!el) {
-        return;
-      }
-      el.off("drag").off("dragend");
-      const draggable = itemModel.get("draggable");
-      if (draggable) {
-        el.on("drag", (e2) => {
-          switch (layout18) {
-            case "force":
-              forceLayout2.warmUp();
-              !this._layouting && this._startForceLayoutIteration(forceLayout2, layoutAnimation);
-              forceLayout2.setFixed(idx);
-              data.setItemLayout(idx, [el.x, el.y]);
-              break;
-            case "circular":
-              data.setItemLayout(idx, [el.x, el.y]);
-              node.setLayout({fixed: true}, true);
-              circularLayout(seriesModel, "symbolSize", node, [e2.offsetX, e2.offsetY]);
-              this.updateLayout(seriesModel);
-              break;
-            case "none":
-            default:
-              data.setItemLayout(idx, [el.x, el.y]);
-              simpleLayoutEdge(seriesModel.getGraph(), seriesModel);
-              this.updateLayout(seriesModel);
-              break;
+
+      GraphView.prototype.render = function (seriesModel, ecModel, api) {
+        var _this = this;
+
+        var coordSys = seriesModel.coordinateSystem;
+        this._model = seriesModel;
+        var symbolDraw = this._symbolDraw;
+        var lineDraw = this._lineDraw;
+        var group = this.group;
+
+        if (isViewCoordSys(coordSys)) {
+          var groupNewProp = {
+            x: coordSys.x,
+            y: coordSys.y,
+            scaleX: coordSys.scaleX,
+            scaleY: coordSys.scaleY
+          };
+
+          if (this._firstRender) {
+            group.attr(groupNewProp);
+          } else {
+            updateProps(group, groupNewProp, seriesModel);
           }
-        }).on("dragend", () => {
-          if (forceLayout2) {
-            forceLayout2.setUnfixed(idx);
+        } // Fix edge contact point with node
+
+
+        adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
+        var data = seriesModel.getData();
+        symbolDraw.updateData(data);
+        var edgeData = seriesModel.getEdgeData(); // TODO: TYPE
+
+        lineDraw.updateData(edgeData);
+
+        this._updateNodeAndLinkScale();
+
+        this._updateController(seriesModel, ecModel, api);
+
+        clearTimeout(this._layoutTimeout);
+        var forceLayout = seriesModel.forceLayout;
+        var layoutAnimation = seriesModel.get(['force', 'layoutAnimation']);
+
+        if (forceLayout) {
+          this._startForceLayoutIteration(forceLayout, layoutAnimation);
+        }
+
+        var layout = seriesModel.get('layout');
+        data.graph.eachNode(function (node) {
+          var idx = node.dataIndex;
+          var el = node.getGraphicEl();
+          var itemModel = node.getModel();
+
+          if (!el) {
+            return;
+          } // Update draggable
+
+
+          el.off('drag').off('dragend');
+          var draggable = itemModel.get('draggable');
+
+          if (draggable) {
+            el.on('drag', function (e) {
+              switch (layout) {
+                case 'force':
+                  forceLayout.warmUp();
+                  !_this._layouting && _this._startForceLayoutIteration(forceLayout, layoutAnimation);
+                  forceLayout.setFixed(idx); // Write position back to layout
+
+                  data.setItemLayout(idx, [el.x, el.y]);
+                  break;
+
+                case 'circular':
+                  data.setItemLayout(idx, [el.x, el.y]); // mark node fixed
+
+                  node.setLayout({
+                    fixed: true
+                  }, true); // recalculate circular layout
+
+                  circularLayout(seriesModel, 'symbolSize', node, [e.offsetX, e.offsetY]);
+
+                  _this.updateLayout(seriesModel);
+
+                  break;
+
+                case 'none':
+                default:
+                  data.setItemLayout(idx, [el.x, el.y]); // update edge
+
+                  simpleLayoutEdge(seriesModel.getGraph(), seriesModel);
+
+                  _this.updateLayout(seriesModel);
+
+                  break;
+              }
+            }).on('dragend', function () {
+              if (forceLayout) {
+                forceLayout.setUnfixed(idx);
+              }
+            });
+          }
+
+          el.setDraggable(draggable && !!forceLayout, !!itemModel.get('cursor'));
+          var focus = itemModel.get(['emphasis', 'focus']);
+
+          if (focus === 'adjacency') {
+            getECData(el).focus = node.getAdjacentDataIndices();
           }
         });
-      }
-      el.setDraggable(draggable, !!itemModel.get("cursor"));
-      const focus = itemModel.get(["emphasis", "focus"]);
-      if (focus === "adjacency") {
-        getECData(el).focus = node.getAdjacentDataIndices();
-      }
-      if (focus === "path") {
-        getECData(el).focus = node.getPathDataIndices();
-      }
-    });
-    data.graph.eachEdge(function(edge) {
-      const el = edge.getGraphicEl();
-      const focus = edge.getModel().get(["emphasis", "focus"]);
-      if (!el) {
-        return;
-      }
-      if (focus === "adjacency" || focus === "path") {
-        getECData(el).focus = {
-          edge: [edge.dataIndex],
-          node: [edge.node1.dataIndex, edge.node2.dataIndex]
-        };
-      }
-    });
-    const circularRotateLabel = seriesModel.get("layout") === "circular" && seriesModel.get(["circular", "rotateLabel"]);
-    const cx = data.getLayout("cx");
-    const cy = data.getLayout("cy");
-    data.graph.eachNode((node) => {
-      rotateNodeLabel(node, circularRotateLabel, cx, cy);
-    });
-    this._firstRender = false;
-  }
-  dispose() {
-    this._controller && this._controller.dispose();
-    this._controllerHost = null;
-  }
-  _startForceLayoutIteration(forceLayout2, layoutAnimation) {
-    const self2 = this;
-    (function step() {
-      forceLayout2.step(function(stopped) {
-        self2.updateLayout(self2._model);
-        (self2._layouting = !stopped) && (layoutAnimation ? self2._layoutTimeout = setTimeout(step, 16) : step());
-      });
-    })();
-  }
-  _updateController(seriesModel, ecModel, api2) {
-    const controller = this._controller;
-    const controllerHost = this._controllerHost;
-    const group = this.group;
-    controller.setPointerChecker(function(e2, x, y) {
-      const rect = group.getBoundingRect();
-      rect.applyTransform(group.transform);
-      return rect.contain(x, y) && !onIrrelevantElement(e2, api2, seriesModel);
-    });
-    if (!isViewCoordSys(seriesModel.coordinateSystem)) {
-      controller.disable();
-      return;
-    }
-    controller.enable(seriesModel.get("roam"));
-    controllerHost.zoomLimit = seriesModel.get("scaleLimit");
-    controllerHost.zoom = seriesModel.coordinateSystem.getZoom();
-    controller.off("pan").off("zoom").on("pan", (e2) => {
-      updateViewOnPan(controllerHost, e2.dx, e2.dy);
-      api2.dispatchAction({
-        seriesId: seriesModel.id,
-        type: "graphRoam",
-        dx: e2.dx,
-        dy: e2.dy
-      });
-    }).on("zoom", (e2) => {
-      updateViewOnZoom(controllerHost, e2.scale, e2.originX, e2.originY);
-      api2.dispatchAction({
-        seriesId: seriesModel.id,
-        type: "graphRoam",
-        zoom: e2.scale,
-        originX: e2.originX,
-        originY: e2.originY
-      });
-      this._updateNodeAndLinkScale();
-      adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
-      this._lineDraw.updateLayout();
-      api2.updateLabelLayout();
-    });
-  }
-  _updateNodeAndLinkScale() {
-    const seriesModel = this._model;
-    const data = seriesModel.getData();
-    const nodeScale = getNodeGlobalScale(seriesModel);
-    data.eachItemGraphicEl(function(el, idx) {
-      el && el.setSymbolScale(nodeScale);
-    });
-  }
-  updateLayout(seriesModel) {
-    adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
-    this._symbolDraw.updateLayout();
-    this._lineDraw.updateLayout();
-  }
-  remove(ecModel, api2) {
-    this._symbolDraw && this._symbolDraw.remove();
-    this._lineDraw && this._lineDraw.remove();
-  }
-};
-var GraphView = GraphView2;
-GraphView.type = "graph";
-var GraphView_default = GraphView;
+        data.graph.eachEdge(function (edge) {
+          var el = edge.getGraphicEl();
+          var focus = edge.getModel().get(['emphasis', 'focus']);
 
-// src/data/Graph.ts
-function generateNodeKey(id) {
-  return "_EC_" + id;
-}
-var Graph = class {
-  constructor(directed) {
-    this.type = "graph";
-    this.nodes = [];
-    this.edges = [];
-    this._nodesMap = {};
-    this._edgesMap = {};
-    this._directed = directed || false;
-  }
-  isDirected() {
-    return this._directed;
-  }
-  addNode(id, dataIndex) {
-    id = id == null ? "" + dataIndex : "" + id;
-    const nodesMap = this._nodesMap;
-    if (nodesMap[generateNodeKey(id)]) {
-      if (true) {
-        console.error("Graph nodes have duplicate name or id");
-      }
-      return;
-    }
-    const node = new GraphNode(id, dataIndex);
-    node.hostGraph = this;
-    this.nodes.push(node);
-    nodesMap[generateNodeKey(id)] = node;
-    return node;
-  }
-  getNodeByIndex(dataIndex) {
-    const rawIdx = this.data.getRawIndex(dataIndex);
-    return this.nodes[rawIdx];
-  }
-  getNodeById(id) {
-    return this._nodesMap[generateNodeKey(id)];
-  }
-  addEdge(n1, n2, dataIndex) {
-    const nodesMap = this._nodesMap;
-    const edgesMap = this._edgesMap;
-    if (isNumber(n1)) {
-      n1 = this.nodes[n1];
-    }
-    if (isNumber(n2)) {
-      n2 = this.nodes[n2];
-    }
-    if (!(n1 instanceof GraphNode)) {
-      n1 = nodesMap[generateNodeKey(n1)];
-    }
-    if (!(n2 instanceof GraphNode)) {
-      n2 = nodesMap[generateNodeKey(n2)];
-    }
-    if (!n1 || !n2) {
-      return;
-    }
-    const key = n1.id + "-" + n2.id;
-    const edge = new GraphEdge(n1, n2, dataIndex);
-    edge.hostGraph = this;
-    if (this._directed) {
-      n1.outEdges.push(edge);
-      n2.inEdges.push(edge);
-    }
-    n1.edges.push(edge);
-    if (n1 !== n2) {
-      n2.edges.push(edge);
-    }
-    this.edges.push(edge);
-    edgesMap[key] = edge;
-    return edge;
-  }
-  getEdgeByIndex(dataIndex) {
-    const rawIdx = this.edgeData.getRawIndex(dataIndex);
-    return this.edges[rawIdx];
-  }
-  getEdge(n1, n2) {
-    if (n1 instanceof GraphNode) {
-      n1 = n1.id;
-    }
-    if (n2 instanceof GraphNode) {
-      n2 = n2.id;
-    }
-    const edgesMap = this._edgesMap;
-    if (this._directed) {
-      return edgesMap[n1 + "-" + n2];
-    } else {
-      return edgesMap[n1 + "-" + n2] || edgesMap[n2 + "-" + n1];
-    }
-  }
-  eachNode(cb, context) {
-    const nodes = this.nodes;
-    const len2 = nodes.length;
-    for (let i = 0; i < len2; i++) {
-      if (nodes[i].dataIndex >= 0) {
-        cb.call(context, nodes[i], i);
-      }
-    }
-  }
-  eachEdge(cb, context) {
-    const edges = this.edges;
-    const len2 = edges.length;
-    for (let i = 0; i < len2; i++) {
-      if (edges[i].dataIndex >= 0 && edges[i].node1.dataIndex >= 0 && edges[i].node2.dataIndex >= 0) {
-        cb.call(context, edges[i], i);
-      }
-    }
-  }
-  breadthFirstTraverse(cb, startNode, direction, context) {
-    if (!(startNode instanceof GraphNode)) {
-      startNode = this._nodesMap[generateNodeKey(startNode)];
-    }
-    if (!startNode) {
-      return;
-    }
-    const edgeType = direction === "out" ? "outEdges" : direction === "in" ? "inEdges" : "edges";
-    for (let i = 0; i < this.nodes.length; i++) {
-      this.nodes[i].__visited = false;
-    }
-    if (cb.call(context, startNode, null)) {
-      return;
-    }
-    const queue = [startNode];
-    while (queue.length) {
-      const currentNode = queue.shift();
-      const edges = currentNode[edgeType];
-      for (let i = 0; i < edges.length; i++) {
-        const e2 = edges[i];
-        const otherNode = e2.node1 === currentNode ? e2.node2 : e2.node1;
-        if (!otherNode.__visited) {
-          if (cb.call(context, otherNode, currentNode)) {
+          if (!el) {
             return;
           }
-          queue.push(otherNode);
-          otherNode.__visited = true;
+
+          if (focus === 'adjacency') {
+            getECData(el).focus = {
+              edge: [edge.dataIndex],
+              node: [edge.node1.dataIndex, edge.node2.dataIndex]
+            };
+          }
+        });
+        var circularRotateLabel = seriesModel.get('layout') === 'circular' && seriesModel.get(['circular', 'rotateLabel']);
+        var cx = data.getLayout('cx');
+        var cy = data.getLayout('cy');
+        data.graph.eachNode(function (node) {
+          rotateNodeLabel(node, circularRotateLabel, cx, cy);
+        });
+        this._firstRender = false;
+      };
+
+      GraphView.prototype.dispose = function () {
+        this._controller && this._controller.dispose();
+        this._controllerHost = null;
+      };
+
+      GraphView.prototype._startForceLayoutIteration = function (forceLayout, layoutAnimation) {
+        var self = this;
+
+        (function step() {
+          forceLayout.step(function (stopped) {
+            self.updateLayout(self._model);
+            (self._layouting = !stopped) && (layoutAnimation ? self._layoutTimeout = setTimeout(step, 16) : step());
+          });
+        })();
+      };
+
+      GraphView.prototype._updateController = function (seriesModel, ecModel, api) {
+        var _this = this;
+
+        var controller = this._controller;
+        var controllerHost = this._controllerHost;
+        var group = this.group;
+        controller.setPointerChecker(function (e, x, y) {
+          var rect = group.getBoundingRect();
+          rect.applyTransform(group.transform);
+          return rect.contain(x, y) && !onIrrelevantElement(e, api, seriesModel);
+        });
+
+        if (!isViewCoordSys(seriesModel.coordinateSystem)) {
+          controller.disable();
+          return;
         }
+
+        controller.enable(seriesModel.get('roam'));
+        controllerHost.zoomLimit = seriesModel.get('scaleLimit');
+        controllerHost.zoom = seriesModel.coordinateSystem.getZoom();
+        controller.off('pan').off('zoom').on('pan', function (e) {
+          updateViewOnPan(controllerHost, e.dx, e.dy);
+          api.dispatchAction({
+            seriesId: seriesModel.id,
+            type: 'graphRoam',
+            dx: e.dx,
+            dy: e.dy
+          });
+        }).on('zoom', function (e) {
+          updateViewOnZoom(controllerHost, e.scale, e.originX, e.originY);
+          api.dispatchAction({
+            seriesId: seriesModel.id,
+            type: 'graphRoam',
+            zoom: e.scale,
+            originX: e.originX,
+            originY: e.originY
+          });
+
+          _this._updateNodeAndLinkScale();
+
+          adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
+
+          _this._lineDraw.updateLayout(); // Only update label layout on zoom
+
+
+          api.updateLabelLayout();
+        });
+      };
+
+      GraphView.prototype._updateNodeAndLinkScale = function () {
+        var seriesModel = this._model;
+        var data = seriesModel.getData();
+        var nodeScale = getNodeGlobalScale(seriesModel);
+        data.eachItemGraphicEl(function (el, idx) {
+          el && el.setSymbolScale(nodeScale);
+        });
+      };
+
+      GraphView.prototype.updateLayout = function (seriesModel) {
+        adjustEdge(seriesModel.getGraph(), getNodeGlobalScale(seriesModel));
+
+        this._symbolDraw.updateLayout();
+
+        this._lineDraw.updateLayout();
+      };
+
+      GraphView.prototype.remove = function (ecModel, api) {
+        this._symbolDraw && this._symbolDraw.remove();
+        this._lineDraw && this._lineDraw.remove();
+      };
+
+      GraphView.type = 'graph';
+      return GraphView;
+    }(ChartView);
+
+    function generateNodeKey(id) {
+      return '_EC_' + id;
+    }
+
+    var Graph =
+    /** @class */
+    function () {
+      function Graph(directed) {
+        this.type = 'graph';
+        this.nodes = [];
+        this.edges = [];
+        this._nodesMap = {};
+        /**
+         * @type {Object.<string, module:echarts/data/Graph.Edge>}
+         * @private
+         */
+
+        this._edgesMap = {};
+        this._directed = directed || false;
       }
-    }
-  }
-  update() {
-    const data = this.data;
-    const edgeData = this.edgeData;
-    const nodes = this.nodes;
-    const edges = this.edges;
-    for (let i = 0, len2 = nodes.length; i < len2; i++) {
-      nodes[i].dataIndex = -1;
-    }
-    for (let i = 0, len2 = data.count(); i < len2; i++) {
-      nodes[data.getRawIndex(i)].dataIndex = i;
-    }
-    edgeData.filterSelf(function(idx) {
-      const edge = edges[edgeData.getRawIndex(idx)];
-      return edge.node1.dataIndex >= 0 && edge.node2.dataIndex >= 0;
-    });
-    for (let i = 0, len2 = edges.length; i < len2; i++) {
-      edges[i].dataIndex = -1;
-    }
-    for (let i = 0, len2 = edgeData.count(); i < len2; i++) {
-      edges[edgeData.getRawIndex(i)].dataIndex = i;
-    }
-  }
-  clone() {
-    const graph = new Graph(this._directed);
-    const nodes = this.nodes;
-    const edges = this.edges;
-    for (let i = 0; i < nodes.length; i++) {
-      graph.addNode(nodes[i].id, nodes[i].dataIndex);
-    }
-    for (let i = 0; i < edges.length; i++) {
-      const e2 = edges[i];
-      graph.addEdge(e2.node1.id, e2.node2.id, e2.dataIndex);
-    }
-    return graph;
-  }
-};
-var GraphNode = class {
-  constructor(id, dataIndex) {
-    this.inEdges = [];
-    this.outEdges = [];
-    this.edges = [];
-    this.dataIndex = -1;
-    this.id = id == null ? "" : id;
-    this.dataIndex = dataIndex == null ? -1 : dataIndex;
-  }
-  degree() {
-    return this.edges.length;
-  }
-  inDegree() {
-    return this.inEdges.length;
-  }
-  outDegree() {
-    return this.outEdges.length;
-  }
-  getModel(path) {
-    if (this.dataIndex < 0) {
-      return;
-    }
-    const graph = this.hostGraph;
-    const itemModel = graph.data.getItemModel(this.dataIndex);
-    return itemModel.getModel(path);
-  }
-  getAdjacentDataIndices() {
-    const dataIndices = {
-      edge: [],
-      node: []
-    };
-    for (let i = 0; i < this.edges.length; i++) {
-      const adjacentEdge = this.edges[i];
-      if (adjacentEdge.dataIndex < 0) {
-        continue;
-      }
-      dataIndices.edge.push(adjacentEdge.dataIndex);
-      dataIndices.node.push(adjacentEdge.node1.dataIndex, adjacentEdge.node2.dataIndex);
-    }
-    return dataIndices;
-  }
-  getPathDataIndices() {
-    const dataIndices = {
-      edge: [],
-      node: []
-    };
-    const deepLimit = 1e3;
-    const findParentNode = (dataIndex, deep = 0) => {
-      if (deep >= deepLimit) {
-        return;
-      }
-      for (let i = 0; i < this.hostGraph.edges.length; i++) {
-        const adjacentEdge = this.hostGraph.edges[i];
-        if (adjacentEdge.dataIndex < 0) {
-          continue;
+      /**
+       * If is directed graph
+       */
+
+
+      Graph.prototype.isDirected = function () {
+        return this._directed;
+      };
+      /**
+       * Add a new node
+       */
+
+      Graph.prototype.addNode = function (id, dataIndex) {
+        id = id == null ? '' + dataIndex : '' + id;
+        var nodesMap = this._nodesMap;
+
+        if (nodesMap[generateNodeKey(id)]) {
+          if ("development" !== 'production') {
+            console.error('Graph nodes have duplicate name or id');
+          }
+
+          return;
         }
-        if (dataIndex === adjacentEdge.node2.dataIndex) {
+
+        var node = new GraphNode(id, dataIndex);
+        node.hostGraph = this;
+        this.nodes.push(node);
+        nodesMap[generateNodeKey(id)] = node;
+        return node;
+      };
+      /**
+       * Get node by data index
+       */
+
+      Graph.prototype.getNodeByIndex = function (dataIndex) {
+        var rawIdx = this.data.getRawIndex(dataIndex);
+        return this.nodes[rawIdx];
+      };
+      /**
+       * Get node by id
+       */
+
+      Graph.prototype.getNodeById = function (id) {
+        return this._nodesMap[generateNodeKey(id)];
+      };
+      /**
+       * Add a new edge
+       */
+
+      Graph.prototype.addEdge = function (n1, n2, dataIndex) {
+        var nodesMap = this._nodesMap;
+        var edgesMap = this._edgesMap; // PNEDING
+
+        if (isNumber(n1)) {
+          n1 = this.nodes[n1];
+        }
+
+        if (isNumber(n2)) {
+          n2 = this.nodes[n2];
+        }
+
+        if (!(n1 instanceof GraphNode)) {
+          n1 = nodesMap[generateNodeKey(n1)];
+        }
+
+        if (!(n2 instanceof GraphNode)) {
+          n2 = nodesMap[generateNodeKey(n2)];
+        }
+
+        if (!n1 || !n2) {
+          return;
+        }
+
+        var key = n1.id + '-' + n2.id;
+        var edge = new GraphEdge(n1, n2, dataIndex);
+        edge.hostGraph = this;
+
+        if (this._directed) {
+          n1.outEdges.push(edge);
+          n2.inEdges.push(edge);
+        }
+
+        n1.edges.push(edge);
+
+        if (n1 !== n2) {
+          n2.edges.push(edge);
+        }
+
+        this.edges.push(edge);
+        edgesMap[key] = edge;
+        return edge;
+      };
+      /**
+       * Get edge by data index
+       */
+
+      Graph.prototype.getEdgeByIndex = function (dataIndex) {
+        var rawIdx = this.edgeData.getRawIndex(dataIndex);
+        return this.edges[rawIdx];
+      };
+      /**
+       * Get edge by two linked nodes
+       */
+
+      Graph.prototype.getEdge = function (n1, n2) {
+        if (n1 instanceof GraphNode) {
+          n1 = n1.id;
+        }
+
+        if (n2 instanceof GraphNode) {
+          n2 = n2.id;
+        }
+
+        var edgesMap = this._edgesMap;
+
+        if (this._directed) {
+          return edgesMap[n1 + '-' + n2];
+        } else {
+          return edgesMap[n1 + '-' + n2] || edgesMap[n2 + '-' + n1];
+        }
+      };
+      /**
+       * Iterate all nodes
+       */
+
+      Graph.prototype.eachNode = function (cb, context) {
+        var nodes = this.nodes;
+        var len = nodes.length;
+
+        for (var i = 0; i < len; i++) {
+          if (nodes[i].dataIndex >= 0) {
+            cb.call(context, nodes[i], i);
+          }
+        }
+      };
+      /**
+       * Iterate all edges
+       */
+
+      Graph.prototype.eachEdge = function (cb, context) {
+        var edges = this.edges;
+        var len = edges.length;
+
+        for (var i = 0; i < len; i++) {
+          if (edges[i].dataIndex >= 0 && edges[i].node1.dataIndex >= 0 && edges[i].node2.dataIndex >= 0) {
+            cb.call(context, edges[i], i);
+          }
+        }
+      };
+      /**
+       * Breadth first traverse
+       * Return true to stop traversing
+       */
+
+      Graph.prototype.breadthFirstTraverse = function (cb, startNode, direction, context) {
+        if (!(startNode instanceof GraphNode)) {
+          startNode = this._nodesMap[generateNodeKey(startNode)];
+        }
+
+        if (!startNode) {
+          return;
+        }
+
+        var edgeType = direction === 'out' ? 'outEdges' : direction === 'in' ? 'inEdges' : 'edges';
+
+        for (var i = 0; i < this.nodes.length; i++) {
+          this.nodes[i].__visited = false;
+        }
+
+        if (cb.call(context, startNode, null)) {
+          return;
+        }
+
+        var queue = [startNode];
+
+        while (queue.length) {
+          var currentNode = queue.shift();
+          var edges = currentNode[edgeType];
+
+          for (var i = 0; i < edges.length; i++) {
+            var e = edges[i];
+            var otherNode = e.node1 === currentNode ? e.node2 : e.node1;
+
+            if (!otherNode.__visited) {
+              if (cb.call(context, otherNode, currentNode)) {
+                // Stop traversing
+                return;
+              }
+
+              queue.push(otherNode);
+              otherNode.__visited = true;
+            }
+          }
+        }
+      };
+      // depthFirstTraverse(
+      //     cb, startNode, direction, context
+      // ) {
+      // };
+      // Filter update
+
+      Graph.prototype.update = function () {
+        var data = this.data;
+        var edgeData = this.edgeData;
+        var nodes = this.nodes;
+        var edges = this.edges;
+
+        for (var i = 0, len = nodes.length; i < len; i++) {
+          nodes[i].dataIndex = -1;
+        }
+
+        for (var i = 0, len = data.count(); i < len; i++) {
+          nodes[data.getRawIndex(i)].dataIndex = i;
+        }
+
+        edgeData.filterSelf(function (idx) {
+          var edge = edges[edgeData.getRawIndex(idx)];
+          return edge.node1.dataIndex >= 0 && edge.node2.dataIndex >= 0;
+        }); // Update edge
+
+        for (var i = 0, len = edges.length; i < len; i++) {
+          edges[i].dataIndex = -1;
+        }
+
+        for (var i = 0, len = edgeData.count(); i < len; i++) {
+          edges[edgeData.getRawIndex(i)].dataIndex = i;
+        }
+      };
+      /**
+       * @return {module:echarts/data/Graph}
+       */
+
+      Graph.prototype.clone = function () {
+        var graph = new Graph(this._directed);
+        var nodes = this.nodes;
+        var edges = this.edges;
+
+        for (var i = 0; i < nodes.length; i++) {
+          graph.addNode(nodes[i].id, nodes[i].dataIndex);
+        }
+
+        for (var i = 0; i < edges.length; i++) {
+          var e = edges[i];
+          graph.addEdge(e.node1.id, e.node2.id, e.dataIndex);
+        }
+
+        return graph;
+      };
+      return Graph;
+    }();
+
+    var GraphNode =
+    /** @class */
+    function () {
+      function GraphNode(id, dataIndex) {
+        this.inEdges = [];
+        this.outEdges = [];
+        this.edges = [];
+        this.dataIndex = -1;
+        this.id = id == null ? '' : id;
+        this.dataIndex = dataIndex == null ? -1 : dataIndex;
+      }
+      /**
+       * @return {number}
+       */
+
+
+      GraphNode.prototype.degree = function () {
+        return this.edges.length;
+      };
+      /**
+       * @return {number}
+       */
+
+
+      GraphNode.prototype.inDegree = function () {
+        return this.inEdges.length;
+      };
+      /**
+      * @return {number}
+      */
+
+
+      GraphNode.prototype.outDegree = function () {
+        return this.outEdges.length;
+      };
+
+      GraphNode.prototype.getModel = function (path) {
+        if (this.dataIndex < 0) {
+          return;
+        }
+
+        var graph = this.hostGraph;
+        var itemModel = graph.data.getItemModel(this.dataIndex);
+        return itemModel.getModel(path);
+      };
+
+      GraphNode.prototype.getAdjacentDataIndices = function () {
+        var dataIndices = {
+          edge: [],
+          node: []
+        };
+
+        for (var i = 0; i < this.edges.length; i++) {
+          var adjacentEdge = this.edges[i];
+
+          if (adjacentEdge.dataIndex < 0) {
+            continue;
+          }
+
           dataIndices.edge.push(adjacentEdge.dataIndex);
-          dataIndices.node.push(adjacentEdge.node1.dataIndex);
-          findParentNode(adjacentEdge.node1.dataIndex, deep + 1);
+          dataIndices.node.push(adjacentEdge.node1.dataIndex, adjacentEdge.node2.dataIndex);
         }
-      }
-    };
-    findParentNode(this.dataIndex);
-    return dataIndices;
-  }
-};
-var GraphEdge = class {
-  constructor(n1, n2, dataIndex) {
-    this.dataIndex = -1;
-    this.node1 = n1;
-    this.node2 = n2;
-    this.dataIndex = dataIndex == null ? -1 : dataIndex;
-  }
-  getModel(path) {
-    if (this.dataIndex < 0) {
-      return;
+
+        return dataIndices;
+      };
+
+      return GraphNode;
+    }();
+
+    var GraphEdge =
+    /** @class */
+    function () {
+      function GraphEdge(n1, n2, dataIndex) {
+        this.dataIndex = -1;
+        this.node1 = n1;
+        this.node2 = n2;
+        this.dataIndex = dataIndex == null ? -1 : dataIndex;
+      } // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
+
+      GraphEdge.prototype.getModel = function (path) {
+        if (this.dataIndex < 0) {
+          return;
+        }
+
+        var graph = this.hostGraph;
+        var itemModel = graph.edgeData.getItemModel(this.dataIndex);
+        return itemModel.getModel(path);
+      };
+
+      GraphEdge.prototype.getAdjacentDataIndices = function () {
+        return {
+          edge: [this.dataIndex],
+          node: [this.node1.dataIndex, this.node2.dataIndex]
+        };
+      };
+
+      return GraphEdge;
+    }();
+
+    function createGraphDataProxyMixin(hostName, dataName) {
+      return {
+        /**
+         * @param Default 'value'. can be 'a', 'b', 'c', 'd', 'e'.
+         */
+        getValue: function (dimension) {
+          var data = this[hostName][dataName];
+          return data.getStore().get(data.getDimensionIndex(dimension || 'value'), this.dataIndex);
+        },
+        // TODO: TYPE stricter type.
+        setVisual: function (key, value) {
+          this.dataIndex >= 0 && this[hostName][dataName].setItemVisual(this.dataIndex, key, value);
+        },
+        getVisual: function (key) {
+          return this[hostName][dataName].getItemVisual(this.dataIndex, key);
+        },
+        setLayout: function (layout, merge) {
+          this.dataIndex >= 0 && this[hostName][dataName].setItemLayout(this.dataIndex, layout, merge);
+        },
+        getLayout: function () {
+          return this[hostName][dataName].getItemLayout(this.dataIndex);
+        },
+        getGraphicEl: function () {
+          return this[hostName][dataName].getItemGraphicEl(this.dataIndex);
+        },
+        getRawIndex: function () {
+          return this[hostName][dataName].getRawIndex(this.dataIndex);
+        }
+      };
     }
-    const graph = this.hostGraph;
-    const itemModel = graph.edgeData.getItemModel(this.dataIndex);
-    return itemModel.getModel(path);
-  }
-  getAdjacentDataIndices() {
-    return {
-      edge: [this.dataIndex],
-      node: [this.node1.dataIndex, this.node2.dataIndex]
-    };
-  }
-};
-function createGraphDataProxyMixin(hostName, dataName) {
-  return {
-    getValue(dimension) {
-      const data = this[hostName][dataName];
-      return data.getStore().get(data.getDimensionIndex(dimension || "value"), this.dataIndex);
-    },
-    setVisual(key, value) {
-      this.dataIndex >= 0 && this[hostName][dataName].setItemVisual(this.dataIndex, key, value);
-    },
-    getVisual(key) {
-      return this[hostName][dataName].getItemVisual(this.dataIndex, key);
-    },
-    setLayout(layout18, merge2) {
-      this.dataIndex >= 0 && this[hostName][dataName].setItemLayout(this.dataIndex, layout18, merge2);
-    },
-    getLayout() {
-      return this[hostName][dataName].getItemLayout(this.dataIndex);
-    },
-    getGraphicEl() {
-      return this[hostName][dataName].getItemGraphicEl(this.dataIndex);
-    },
-    getRawIndex() {
-      return this[hostName][dataName].getRawIndex(this.dataIndex);
-    }
-  };
-}
-mixin(GraphNode, createGraphDataProxyMixin("hostGraph", "data"));
-mixin(GraphEdge, createGraphDataProxyMixin("hostGraph", "edgeData"));
-var Graph_default = Graph;
+    mixin(GraphNode, createGraphDataProxyMixin('hostGraph', 'data'));
+    mixin(GraphEdge, createGraphDataProxyMixin('hostGraph', 'edgeData'));
 
 // src/chart/helper/createGraphFromNodeEdge.ts
 function createGraphFromNodeEdge(nodes, edges, seriesModel, directed, beforeLink) {

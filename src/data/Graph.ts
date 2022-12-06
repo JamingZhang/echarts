@@ -372,19 +372,60 @@ class GraphNode {
         return itemModel.getModel(path as any);
     }
 
+    // getAdjacentDataIndices(): {node: number[], edge: number[]} {
+    //     const dataIndices = {
+    //         edge: [] as number[],
+    //         node: [] as number[]
+    //     };
+    //     for (let i = 0; i < this.edges.length; i++) {
+    //         const adjacentEdge = this.edges[i];
+    //         if (adjacentEdge.dataIndex < 0) {
+    //             continue;
+    //         }
+    //         dataIndices.edge.push(adjacentEdge.dataIndex);
+    //         dataIndices.node.push(adjacentEdge.node1.dataIndex, adjacentEdge.node2.dataIndex);
+    //     }
+    //     // eslint-disable-next-line no-console
+    //     console.log('getAdjacentDataIndices:', this.edges, dataIndices);
+    //     return dataIndices;
+    // }
+
     getAdjacentDataIndices(): {node: number[], edge: number[]} {
         const dataIndices = {
             edge: [] as number[],
             node: [] as number[]
         };
+
+        // const findParentNode = (dataIndex: number) => {
+        //     for (let i = 0; i < this.hostGraph.edges.length; i++) {
+        //         const adjacentEdge = this.hostGraph.edges[i];
+        //         if (adjacentEdge.dataIndex < 0) {
+        //             continue;
+        //         }
+
+        //         if (dataIndex === adjacentEdge.node2.dataIndex) {
+        //             dataIndices.edge.push(adjacentEdge.dataIndex);
+        //             dataIndices.node.push(adjacentEdge.node1.dataIndex);
+
+        //             findParentNode(adjacentEdge.node1.dataIndex);
+        //         }
+        //     }
+        // };
+
+        // findParentNode(this.dataIndex);
+
         for (let i = 0; i < this.edges.length; i++) {
             const adjacentEdge = this.edges[i];
-            if (adjacentEdge.dataIndex < 0) {
+            if (adjacentEdge.dataIndex < 0 || this.dataIndex !== adjacentEdge.node1.dataIndex) {
                 continue;
             }
             dataIndices.edge.push(adjacentEdge.dataIndex);
             dataIndices.node.push(adjacentEdge.node1.dataIndex, adjacentEdge.node2.dataIndex);
         }
+
+        // eslint-disable-next-line no-console
+        console.log(this.edges, this.hostGraph, dataIndices);
+
         return dataIndices;
     }
 
