@@ -131,6 +131,9 @@ class GraphView extends ChartView {
             const el = node.getGraphicEl() as Symbol;
             const itemModel = node.getModel<GraphNodeItemOption>();
 
+            // eslint-disable-next-line no-console
+            console.log('node and el:', node, el);
+
             if (!el) {
                 return;
             }
@@ -178,6 +181,10 @@ class GraphView extends ChartView {
             if (focus === 'adjacency') {
                 getECData(el).focus = node.getAdjacentDataIndices();
             }
+
+            if (focus === 'path') {
+                getECData(el).focus = node.getPathDataIndices();
+            }
         });
 
         data.graph.eachEdge(function (edge) {
@@ -188,7 +195,7 @@ class GraphView extends ChartView {
                 return;
             }
 
-            if (focus === 'adjacency') {
+            if (focus === 'adjacency' || focus === 'path') {
                 getECData(el).focus = {
                     edge: [edge.dataIndex],
                     node: [edge.node1.dataIndex, edge.node2.dataIndex]

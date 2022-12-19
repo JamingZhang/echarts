@@ -387,6 +387,38 @@ class GraphNode {
         }
         return dataIndices;
     }
+
+    getPathDataIndices(): {node: number[], edge: number[]} {
+        const dataIndices = {
+            edge: [] as number[],
+            node: [] as number[]
+        };
+
+        const deepLimit = 1000;
+        const findParentNode = (dataIndex: number, deep = 0) => {
+            if (deep >= deepLimit) {
+                return;
+            }
+
+            for (let i = 0; i < this.hostGraph.edges.length; i++) {
+                const adjacentEdge = this.hostGraph.edges[i];
+                if (adjacentEdge.dataIndex < 0) {
+                    continue;
+                }
+
+                if (dataIndex === adjacentEdge.node2.dataIndex) {
+                    dataIndices.edge.push(adjacentEdge.dataIndex);
+                    dataIndices.node.push(adjacentEdge.node1.dataIndex);
+
+                    findParentNode(adjacentEdge.node1.dataIndex, deep + 1);
+                }
+            }
+        };
+
+        findParentNode(this.dataIndex);
+
+        return dataIndices;
+    }
 }
 
 
