@@ -112,6 +112,8 @@ export interface TreeSeriesOption extends
     leaves?: TreeSeriesLeavesOption
 
     data?: TreeSeriesNodeItemOption[]
+
+    nodePadding?: number
 }
 
 export interface TreeAncestors {
@@ -205,6 +207,15 @@ class TreeSeriesModel extends SeriesModel<TreeSeriesOption> {
         return orient;
     }
 
+    getSymbolHeight() {
+        let symbolSize = this.option.symbolSize;
+        if (Array.isArray(symbolSize)) {
+            symbolSize = symbolSize[1];
+        }
+
+        return symbolSize;
+    }
+
     setZoom(zoom: number) {
         this.option.zoom = zoom;
     }
@@ -281,6 +292,8 @@ class TreeSeriesModel extends SeriesModel<TreeSeriesOption> {
         symbol: 'emptyCircle',
 
         symbolSize: 7,
+
+        nodePadding: 10,
 
         expandAndCollapse: true,
 

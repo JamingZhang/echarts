@@ -45,6 +45,7 @@ under the License.
             ], function (echarts, data) {
                 formatUtil = echarts.format;
                 var chart = echarts.init(document.getElementById('main'));
+                window.chart = chart
 
                 window.onresize = function () {
                     chart.resize();
@@ -59,6 +60,7 @@ under the License.
                     tooltip: {
                         trigger: 'item',
                         triggerOn: 'mousemove',
+                        enterable: true,
                         formatter: function (info) {
                             var value = info.value;
                             var treeAncestors = info.treeAncestors;
@@ -88,7 +90,8 @@ under the License.
                             right: '20%',
                             roam: true,
 
-                            symbolSize: 7,
+                            symbolSize: 50,
+                            nodePadding: 10,
 
                             // initialTreeDepth: -1,
 
@@ -114,15 +117,39 @@ under the License.
                 });
 
                 setTimeout(function() {
+                    // const dom1 = document.createElement('div')
+                    // const dom2 = document.createElement('div')
+                    // document.body.appendChild(dom1)
+                    // document.body.appendChild(dom2)
+                    // dom1.style = 'width:10px;height:10px;background:red;position:fixed;top:0;left:0;'
+                    // dom2.style = 'width:10px;height:10px;background:green;position:fixed;top:0;left:0;'
+
+                    // chart.on('mouseover', e => {
+                    //     const pos = chart.getMyPosition({seriesIndex: 0})
+                    //     console.log(pos)
+                    //     const position = pos._itemLayouts[e.dataIndex]
+
+                    //     const t = chart.convertToPixel({seriesIndex: 0}, [2000, 3500])
+                    //     // const t = chart.convertToPixel({seriesIndex: 0}, [position.x, position.y])
+                    //     // const t = chart.convertToPixel({seriesIndex: 0}, 100)
+                    //     console.log(e, position, t)
+
+                    //     dom1.style = `width:10px;height:10px;background:red;position:fixed;top:${position.y + chart.getHeight() * 0.01}px;left:${position.x + chart.getWidth() * 0.07}px;`
+                    //     dom2.style = `width:10px;height:10px;background:green;position:fixed;top:${e.event.offsetY}px;left:${e.event.offsetX}px;`
+                    // })
+
+                    console.log(data)
                     // replace root node
-                    var newData = [data.children[1]];
-                    chart.setOption({
-                        series: [{
-                            type: 'tree',
-                            id: '3',
-                            data: newData
-                        }]
-                    }, false);
+                    // var newData = [data];
+                    // chart.setOption({
+                    //     series: [{
+                    //         type: 'tree',
+                    //         id: '3',
+                    //         data: newData,
+                    //         symbolSize: 20,
+                    //     }]
+                    // }, false);
+
                 }, 1000);
 
             });

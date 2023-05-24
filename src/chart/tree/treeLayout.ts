@@ -44,6 +44,8 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
     const layoutInfo = getViewRect(seriesModel, api);
     seriesModel.layoutInfo = layoutInfo;
     const layout = seriesModel.get('layout');
+    const symbolSize = seriesModel.getSymbolHeight();
+    const nodePadding = seriesModel.get('nodePadding');
     let width = 0;
     let height = 0;
     let separation = null;
@@ -86,8 +88,9 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
             }
         });
 
-        const delta = left === right ? 1 : separation(left, right) / 2;
-        const tx = delta - left.getLayout().x;
+        const delta = left === right ? 1 : separation(left, right) / 2; // 如果 left right 共享一个父节点，那么 delta = 0.5，否则 delta = 1
+        const tx = delta - left.getLayout().x; // tx 是做什么用的？
+        const tx2 = (right.getLayout().x + left.getLayout().x) / 2; // 用于均衡十字坐标系左右两边最远节点的差距
         let kx = 0;
         let ky = 0;
         let coorX = 0;
@@ -108,8 +111,11 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
             if (orient === 'RL' || orient === 'LR') {
                 ky = height / (right.getLayout().x + delta + tx);
                 kx = width / ((bottom.depth - 1) || 1);
+
+                const centerY = height / 2;
                 eachBefore(realRoot, function (node) {
-                    coorY = (node.getLayout().x + tx) * ky;
+                    // coorY = (node.getLayout().x + tx) * ky;
+                    coorY = centerY + (node.getLayout().x - tx2) * (symbolSize + nodePadding);
                     coorX = orient === 'LR'
                         ? (node.depth - 1) * kx
                         : width - (node.depth - 1) * kx;
