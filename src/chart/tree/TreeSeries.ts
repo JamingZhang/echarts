@@ -114,6 +114,8 @@ export interface TreeSeriesOption extends
     data?: TreeSeriesNodeItemOption[]
 
     nodePadding?: number
+
+    ignoreRootInLayout?: boolean
 }
 
 export interface TreeAncestors {
@@ -319,7 +321,9 @@ class TreeSeriesModel extends SeriesModel<TreeSeriesOption> {
 
         animationDuration: 700,
 
-        animationDurationUpdate: 500
+        animationDurationUpdate: 500,
+
+        ignoreRootInLayout: false
     };
 }
 

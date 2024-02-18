@@ -46,6 +46,7 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
     const layout = seriesModel.get('layout');
     const symbolSize = seriesModel.getSymbolHeight();
     const nodePadding = seriesModel.get('nodePadding');
+    const ignoreRootInLayout = seriesModel.get('ignoreRootInLayout');
     let width = 0;
     let height = 0;
     let separation = null;
@@ -72,9 +73,9 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
         virtualRoot.hierNode.modifier = -realRoot.hierNode.prelim;
         eachBefore(realRoot, secondWalk);
 
-        let left = realRoot;
-        let right = realRoot;
-        let bottom = realRoot;
+        let left = realRoot; // 在整个布局中，最左边的节点
+        let right = realRoot; // 在整个布局中，最右边的节点
+        let bottom = realRoot; // 在整个布局中，第一个遍历到的最底端的节点
         eachBefore(realRoot, function (node: TreeLayoutNode) {
             const x = node.getLayout().x;
             if (x < left.getLayout().x) {
@@ -88,7 +89,7 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
             }
         });
 
-        const delta = left === right ? 1 : separation(left, right) / 2; // 如果 left right 共享一个父节点，那么 delta = 0.5，否则 delta = 1
+        const delta = left === right ? 1 : separation(left, right) / 2; // 如果 left right 是同一个节点，那么 delta = 0.5，否则 delta = 1
         const tx = delta - left.getLayout().x; // tx 是做什么用的？
         const tx2 = (right.getLayout().x + left.getLayout().x) / 2; // 用于均衡十字坐标系左右两边最远节点的差距
         let kx = 0;
@@ -112,6 +113,11 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
                 ky = height / (right.getLayout().x + delta + tx);
                 kx = width / ((bottom.depth - 1) || 1);
 
+                if (ignoreRootInLayout) {
+                    // 忽略根节点时重新计算每个节点所占的宽度
+                    kx = width / ((bottom.depth - 2) || 1);
+                }
+
                 const centerY = height / 2;
                 eachBefore(realRoot, function (node) {
                     // coorY = (node.getLayout().x + tx) * ky;
@@ -119,17 +125,52 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
                     coorX = orient === 'LR'
                         ? (node.depth - 1) * kx
                         : width - (node.depth - 1) * kx;
+
+                    if (ignoreRootInLayout) {
+                        // 忽略根节点时重新计算每个节点的 x 坐标
+                        if (node.depth === 1) {
+                            // 如果是根节点，就固定在 x 轴的 0 点
+                            coorX = orient === 'LR' ? 0 : width;
+                        }
+                        else {
+                            coorX = orient === 'LR'
+                                ? (node.depth - 2) * kx
+                                : width - (node.depth - 2) * kx;
+                        }
+                    }
+
+                    // console.log('x', coorX, node);
                     node.setLayout({x: coorX, y: coorY}, true);
                 });
             }
             else if (orient === 'TB' || orient === 'BT') {
                 kx = width / (right.getLayout().x + delta + tx);
                 ky = height / ((bottom.depth - 1) || 1);
+
+                if (ignoreRootInLayout) {
+                    // 忽略根节点时重新计算每个节点所占的高度
+                    ky = height / ((bottom.depth - 2) || 1);
+                }
+
                 eachBefore(realRoot, function (node) {
                     coorX = (node.getLayout().x + tx) * kx;
                     coorY = orient === 'TB'
                         ? (node.depth - 1) * ky
                         : height - (node.depth - 1) * ky;
+
+                    if (ignoreRootInLayout) {
+                        // 忽略根节点时重新计算每个节点的 x 坐标
+                        if (node.depth === 1) {
+                            // 如果是根节点，就固定在 y 轴的 0 点
+                            coorY = orient === 'TB' ? 0 : height;
+                        }
+                        else {
+                            coorY = orient === 'TB'
+                                ? (node.depth - 2) * ky
+                                : height - (node.depth - 2) * ky;
+                        }
+                    }
+
                     node.setLayout({x: coorX, y: coorY}, true);
                 });
             }

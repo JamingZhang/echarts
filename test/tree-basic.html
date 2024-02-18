@@ -51,8 +51,24 @@ under the License.
                     chart.resize();
                 };
 
+                data.symbol = 'none';
+                data.label = {
+                    show: false,
+                };
+                data.itemStyle = {
+                    // opacity: 0,
+                };
+                data.lineStyle = {
+                    width: 0,
+                    opacity: 0,
+                };
                 echarts.util.each(data.children, function (datum, index) {
                     index % 2 === 0 && (datum.collapsed = true);
+
+                    datum.lineStyle = {
+                    width: 0,
+                    opacity: 0,
+                };
                 });
 
                 chart.setOption({
@@ -93,6 +109,8 @@ under the License.
                             symbolSize: 50,
                             nodePadding: 10,
 
+                            // orient: 'BT',
+                            // ignoreRootInLayout: true,
                             // initialTreeDepth: -1,
 
                             label: {
