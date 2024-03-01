@@ -116,6 +116,16 @@ export interface TreeSeriesOption extends
     nodePadding?: number
 
     ignoreRootInLayout?: boolean
+
+    /**
+     * 定义子节点与父节点之间的距离
+     */
+    nodeGap?: number
+
+    /**
+     * 对齐节点
+     */
+    alignNodes?: boolean
 }
 
 export interface TreeAncestors {
@@ -297,6 +307,8 @@ class TreeSeriesModel extends SeriesModel<TreeSeriesOption> {
 
         nodePadding: 10,
 
+        nodeGap: null,
+
         expandAndCollapse: true,
 
         initialTreeDepth: 2,
@@ -323,7 +335,9 @@ class TreeSeriesModel extends SeriesModel<TreeSeriesOption> {
 
         animationDurationUpdate: 500,
 
-        ignoreRootInLayout: false
+        ignoreRootInLayout: false,
+
+        alignNodes: false
     };
 }
 

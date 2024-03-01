@@ -23,24 +23,24 @@ export * from './export/core';
 
 import {install as CanvasRenderer} from './renderer/installCanvasRenderer';
 
-import {install as LineChart} from './chart/line/install';
-import {install as BarChart} from './chart/bar/install';
-import {install as PieChart} from './chart/pie/install';
+import { install as TreeChart } from './chart/tree/install';
+import { install as GraphChart } from './chart/graph/install';
+// import {install as LineChart} from './chart/line/install';
+// import {install as BarChart} from './chart/bar/install';
+// import {install as PieChart} from './chart/pie/install';
 
-import {install as GridSimpleComponent} from './component/grid/installSimple';
-import {install as AriaComponent} from './component/aria/install';
-import {install as DatasetComponent} from './component/dataset/install';
+import { install as TooltipComponent } from './component/tooltip/install';
+// import {install as GridSimpleComponent} from './component/grid/installSimple';
+// import {install as AriaComponent} from './component/aria/install';
+// import {install as DatasetComponent} from './component/dataset/install';
 
 use([CanvasRenderer]);
 
 use([
-    LineChart,
-    BarChart,
-    PieChart
+    TreeChart,
+    GraphChart
 ]);
 
 use([
-    GridSimpleComponent,
-    AriaComponent,
-    DatasetComponent
+    TooltipComponent
 ]);

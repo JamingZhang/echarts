@@ -112,6 +112,7 @@ class RoamController extends Eventful<{
         const mousemoveHandler = bind(this._mousemoveHandler, this);
         const mouseupHandler = bind(this._mouseupHandler, this);
         const mousewheelHandler = bind(this._mousewheelHandler, this);
+        const mouseWheelMoveHandler = bind(this._mouseWheelMoveHandler, this);
         const pinchHandler = bind(this._pinchHandler, this);
 
         /**
@@ -120,7 +121,6 @@ class RoamController extends Eventful<{
          * default mousewheel behaviour (scroll page) will be disabled.
          */
         this.enable = function (controlType, opt) {
-
             // Disable previous first
             this.disable();
 
@@ -128,7 +128,7 @@ class RoamController extends Eventful<{
                 zoomOnMouseWheel: true,
                 moveOnMouseMove: true,
                 // By default, wheel do not trigger move.
-                moveOnMouseWheel: false,
+                moveOnMouseWheel: controlType === 'scrollMove', // 如果是使用了 scrollMove 那就得放弃滚动缩放
                 preventDefaultMouseMove: true
             });
 
@@ -136,10 +136,14 @@ class RoamController extends Eventful<{
                 controlType = true;
             }
 
-            if (controlType === true || (controlType === 'move' || controlType === 'pan')) {
+            if (
+                controlType === true
+                || (controlType === 'move' || controlType === 'pan' || controlType === 'scrollMove')
+            ) {
                 zr.on('mousedown', mousedownHandler);
                 zr.on('mousemove', mousemoveHandler);
                 zr.on('mouseup', mouseupHandler);
+                zr.on('mousewheel', mouseWheelMoveHandler);
             }
             if (controlType === true || (controlType === 'scale' || controlType === 'zoom')) {
                 zr.on('mousewheel', mousewheelHandler);
@@ -273,6 +277,29 @@ class RoamController extends Eventful<{
             const scrollDelta = (wheelDelta > 0 ? 1 : -1) * (absDelta > 3 ? 0.4 : absDelta > 1 ? 0.15 : 0.05);
             checkPointerAndTrigger(this, 'scrollMove', 'moveOnMouseWheel', e, {
                 scrollDelta: scrollDelta, originX: originX, originY: originY, isAvailableBehavior: null
+            });
+        }
+    }
+
+    private _mouseWheelMoveHandler(e: ZRElementEvent) {
+        const shouldMove = isAvailableBehavior('moveOnMouseWheel', e, this._opt);
+        const wheelDelta = e.wheelDelta;
+        const moveSlow = 2;
+
+        // wheelDelta maybe -0 in chrome mac.
+        if (wheelDelta === 0 || !shouldMove) {
+            return;
+        }
+
+        if (shouldMove) {
+            const x = e.offsetX;
+            const y = e.offsetY;
+
+            const dx = (e.event as any).wheelDeltaX / moveSlow;
+            const dy = (e.event as any).wheelDeltaY / moveSlow;
+
+            trigger(this, 'pan', 'moveOnMouseWheel', e, {
+                dx: dx, dy: dy, oldX: x, oldY: y, newX: x + dx, newY: y + dy, isAvailableBehavior: null
             });
         }
     }

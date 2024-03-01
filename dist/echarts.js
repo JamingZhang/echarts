@@ -50402,6 +50402,7 @@
         var mousemoveHandler = bind(_this._mousemoveHandler, _this);
         var mouseupHandler = bind(_this._mouseupHandler, _this);
         var mousewheelHandler = bind(_this._mousewheelHandler, _this);
+        var mouseWheelMoveHandler = bind(_this._mouseWheelMoveHandler, _this);
         var pinchHandler = bind(_this._pinchHandler, _this);
         /**
          * Notice: only enable needed types. For example, if 'zoom'
@@ -50416,7 +50417,7 @@
             zoomOnMouseWheel: true,
             moveOnMouseMove: true,
             // By default, wheel do not trigger move.
-            moveOnMouseWheel: false,
+            moveOnMouseWheel: controlType === 'scrollMove',
             preventDefaultMouseMove: true
           });
 
@@ -50424,10 +50425,11 @@
             controlType = true;
           }
 
-          if (controlType === true || controlType === 'move' || controlType === 'pan') {
+          if (controlType === true || controlType === 'move' || controlType === 'pan' || controlType === 'scrollMove') {
             zr.on('mousedown', mousedownHandler);
             zr.on('mousemove', mousemoveHandler);
             zr.on('mouseup', mouseupHandler);
+            zr.on('mousewheel', mouseWheelMoveHandler);
           }
 
           if (controlType === true || controlType === 'scale' || controlType === 'zoom') {
@@ -50564,6 +50566,32 @@
             scrollDelta: scrollDelta,
             originX: originX,
             originY: originY,
+            isAvailableBehavior: null
+          });
+        }
+      };
+
+      RoamController.prototype._mouseWheelMoveHandler = function (e) {
+        var shouldMove = isAvailableBehavior('moveOnMouseWheel', e, this._opt);
+        var wheelDelta = e.wheelDelta;
+        var moveSlow = 2; // wheelDelta maybe -0 in chrome mac.
+
+        if (wheelDelta === 0 || !shouldMove) {
+          return;
+        }
+
+        if (shouldMove) {
+          var x = e.offsetX;
+          var y = e.offsetY;
+          var dx = e.event.wheelDeltaX / moveSlow;
+          var dy = e.event.wheelDeltaY / moveSlow;
+          trigger(this, 'pan', 'moveOnMouseWheel', e, {
+            dx: dx,
+            dy: dy,
+            oldX: x,
+            oldY: y,
+            newX: x + dx,
+            newY: y + dy,
             isAvailableBehavior: null
           });
         }
@@ -55981,6 +56009,7 @@
         symbol: 'emptyCircle',
         symbolSize: 7,
         nodePadding: 10,
+        nodeGap: null,
         expandAndCollapse: true,
         initialTreeDepth: 2,
         lineStyle: {
@@ -55999,7 +56028,8 @@
         animationEasing: 'linear',
         animationDuration: 700,
         animationDurationUpdate: 500,
-        ignoreRootInLayout: false
+        ignoreRootInLayout: false,
+        alignNodes: false
       };
       return TreeSeriesModel;
     }(SeriesModel);
@@ -56113,6 +56143,8 @@
       var symbolSize = seriesModel.getSymbolHeight();
       var nodePadding = seriesModel.get('nodePadding');
       var ignoreRootInLayout = seriesModel.get('ignoreRootInLayout');
+      var nodeGap = seriesModel.get('nodeGap');
+      var alignNodes = seriesModel.get('alignNodes');
       var width = 0;
       var height = 0;
       var separation$1 = null;
@@ -56158,6 +56190,35 @@
             bottom_1 = node;
           }
         });
+
+        if (alignNodes === true) {
+          // 如果启用节点对齐，就重新计算节点坐标
+          var eachDeep_1 = function (node, nodeIndex, fn) {
+            fn(node, nodeIndex);
+
+            if (node.isExpand) {
+              var children = node.children;
+
+              if (children.length) {
+                for (var i = 0; i < children.length; i++) {
+                  eachDeep_1(children[i], i, fn);
+                }
+              }
+            }
+          };
+
+          var nextX_1 = 0;
+          eachDeep_1(realRoot, 0, function (node, nodeIndex) {
+            if (nodeIndex > 0) {
+              nextX_1 = nextX_1 + 1;
+            }
+
+            node.setLayout({
+              x: nextX_1
+            }, true);
+          });
+        }
+
         var delta = left_1 === right_1 ? 1 : separation$1(left_1, right_1) / 2; // 如果 left right 是同一个节点，那么 delta = 0.5，否则 delta = 1
 
         var tx_1 = delta - left_1.getLayout().x; // tx 是做什么用的？
@@ -56191,15 +56252,30 @@
             ky_1 = height / (right_1.getLayout().x + delta + tx_1);
             kx_1 = width / (bottom_1.depth - 1 || 1);
 
-            if (ignoreRootInLayout) {
-              // 忽略根节点时重新计算每个节点所占的宽度
-              kx_1 = width / (bottom_1.depth - 2 || 1);
+            if (typeof nodeGap === 'number') {
+              kx_1 = nodeGap * (bottom_1.depth - 1 || 1);
+
+              if (ignoreRootInLayout) {
+                // 忽略根节点时重新计算每个节点所占的宽度
+                kx_1 = nodeGap * (bottom_1.depth - 2 || 1);
+              }
+            } else {
+              if (ignoreRootInLayout) {
+                // 忽略根节点时重新计算每个节点所占的宽度
+                kx_1 = width / (bottom_1.depth - 2 || 1);
+              }
             }
 
-            var centerY_1 = height / 2;
+            var centerY_1 = height / 2; // const centerY = 0;
+
             eachBefore(realRoot, function (node) {
               // coorY = (node.getLayout().x + tx) * ky;
               coorY_1 = centerY_1 + (node.getLayout().x - tx2_1) * (symbolSize + nodePadding);
+
+              if (alignNodes === true) {
+                coorY_1 = node.getLayout().x * (symbolSize + nodePadding);
+              }
+
               coorX_1 = orient_1 === 'LR' ? (node.depth - 1) * kx_1 : width - (node.depth - 1) * kx_1;
 
               if (ignoreRootInLayout) {
@@ -56210,8 +56286,7 @@
                 } else {
                   coorX_1 = orient_1 === 'LR' ? (node.depth - 2) * kx_1 : width - (node.depth - 2) * kx_1;
                 }
-              } // console.log('x', coorX, node);
-
+              }
 
               node.setLayout({
                 x: coorX_1,

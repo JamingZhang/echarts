@@ -47,6 +47,8 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
     const symbolSize = seriesModel.getSymbolHeight();
     const nodePadding = seriesModel.get('nodePadding');
     const ignoreRootInLayout = seriesModel.get('ignoreRootInLayout');
+    const nodeGap = seriesModel.get('nodeGap');
+    const alignNodes = seriesModel.get('alignNodes');
     let width = 0;
     let height = 0;
     let separation = null;
@@ -89,6 +91,34 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
             }
         });
 
+        if (alignNodes === true) {
+            // 如果启用节点对齐，就重新计算节点坐标
+            const eachDeep = function (
+                node: TreeLayoutNode,
+                nodeIndex: number,
+                fn: (node: TreeLayoutNode, nodeIndex: number) => void
+            ) {
+                fn(node, nodeIndex);
+                if (node.isExpand) {
+                    const children = node.children;
+                    if (children.length) {
+                        for (let i = 0; i < children.length; i++) {
+                            eachDeep(children[i], i, fn);
+                        }
+                    }
+                }
+            };
+
+            let nextX = 0;
+            eachDeep(realRoot, 0, function (node: TreeLayoutNode, nodeIndex: number) {
+                if (nodeIndex > 0) {
+                    nextX = nextX + 1;
+                }
+
+                node.setLayout({x: nextX}, true);
+            });
+        }
+
         const delta = left === right ? 1 : separation(left, right) / 2; // 如果 left right 是同一个节点，那么 delta = 0.5，否则 delta = 1
         const tx = delta - left.getLayout().x; // tx 是做什么用的？
         const tx2 = (right.getLayout().x + left.getLayout().x) / 2; // 用于均衡十字坐标系左右两边最远节点的差距
@@ -113,15 +143,31 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
                 ky = height / (right.getLayout().x + delta + tx);
                 kx = width / ((bottom.depth - 1) || 1);
 
-                if (ignoreRootInLayout) {
-                    // 忽略根节点时重新计算每个节点所占的宽度
-                    kx = width / ((bottom.depth - 2) || 1);
+                if (typeof nodeGap === 'number') {
+                    kx = nodeGap * ((bottom.depth - 1) || 1);
+
+                    if (ignoreRootInLayout) {
+                        // 忽略根节点时重新计算每个节点所占的宽度
+                        kx = nodeGap * ((bottom.depth - 2) || 1);
+                    }
+                }
+                else {
+                    if (ignoreRootInLayout) {
+                        // 忽略根节点时重新计算每个节点所占的宽度
+                        kx = width / ((bottom.depth - 2) || 1);
+                    }
                 }
 
                 const centerY = height / 2;
+                // const centerY = 0;
                 eachBefore(realRoot, function (node) {
                     // coorY = (node.getLayout().x + tx) * ky;
                     coorY = centerY + (node.getLayout().x - tx2) * (symbolSize + nodePadding);
+
+                    if (alignNodes === true) {
+                        coorY = node.getLayout().x * (symbolSize + nodePadding);
+                    }
+
                     coorX = orient === 'LR'
                         ? (node.depth - 1) * kx
                         : width - (node.depth - 1) * kx;
@@ -139,7 +185,6 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
                         }
                     }
 
-                    // console.log('x', coorX, node);
                     node.setLayout({x: coorX, y: coorY}, true);
                 });
             }

@@ -51,24 +51,24 @@ under the License.
                     chart.resize();
                 };
 
-                data.symbol = 'none';
-                data.label = {
-                    show: false,
-                };
-                data.itemStyle = {
-                    // opacity: 0,
-                };
-                data.lineStyle = {
-                    width: 0,
-                    opacity: 0,
-                };
+                // data.symbol = 'none';
+                // data.label = {
+                //     show: false,
+                // };
+                // data.itemStyle = {
+                //     // opacity: 0,
+                // };
+                // data.lineStyle = {
+                //     width: 0,
+                //     opacity: 0,
+                // };
                 echarts.util.each(data.children, function (datum, index) {
                     index % 2 === 0 && (datum.collapsed = true);
 
-                    datum.lineStyle = {
-                    width: 0,
-                    opacity: 0,
-                };
+                    // datum.lineStyle = {
+                    //     width: 0,
+                    //     opacity: 0,
+                    // };
                 });
 
                 chart.setOption({
@@ -100,18 +100,21 @@ under the License.
 
                             data: [data],
 
-                            top: '1%',
-                            left: '7%',
-                            bottom: '1%',
-                            right: '20%',
-                            roam: true,
+                            // top: '1%',
+                            // left: '7%',
+                            // bottom: '1%',
+                            // right: '20%',
+                            roam: 'move',
+                            edgeShape: 'polyline',
 
                             symbolSize: 50,
                             nodePadding: 10,
+                            // nodeGap: 1000,
+                            alignNodes: true,
 
                             // orient: 'BT',
-                            // ignoreRootInLayout: true,
-                            // initialTreeDepth: -1,
+                            ignoreRootInLayout: false,
+                            initialTreeDepth: 1,
 
                             label: {
                                     position: 'left',

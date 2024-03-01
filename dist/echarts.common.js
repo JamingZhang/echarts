@@ -60478,6 +60478,7 @@
         var mousemoveHandler = bind(_this._mousemoveHandler, _this);
         var mouseupHandler = bind(_this._mouseupHandler, _this);
         var mousewheelHandler = bind(_this._mousewheelHandler, _this);
+        var mouseWheelMoveHandler = bind(_this._mouseWheelMoveHandler, _this);
         var pinchHandler = bind(_this._pinchHandler, _this);
         /**
          * Notice: only enable needed types. For example, if 'zoom'
@@ -60492,7 +60493,7 @@
             zoomOnMouseWheel: true,
             moveOnMouseMove: true,
             // By default, wheel do not trigger move.
-            moveOnMouseWheel: false,
+            moveOnMouseWheel: controlType === 'scrollMove',
             preventDefaultMouseMove: true
           });
 
@@ -60500,10 +60501,11 @@
             controlType = true;
           }
 
-          if (controlType === true || controlType === 'move' || controlType === 'pan') {
+          if (controlType === true || controlType === 'move' || controlType === 'pan' || controlType === 'scrollMove') {
             zr.on('mousedown', mousedownHandler);
             zr.on('mousemove', mousemoveHandler);
             zr.on('mouseup', mouseupHandler);
+            zr.on('mousewheel', mouseWheelMoveHandler);
           }
 
           if (controlType === true || controlType === 'scale' || controlType === 'zoom') {
@@ -60640,6 +60642,32 @@
             scrollDelta: scrollDelta,
             originX: originX,
             originY: originY,
+            isAvailableBehavior: null
+          });
+        }
+      };
+
+      RoamController.prototype._mouseWheelMoveHandler = function (e) {
+        var shouldMove = isAvailableBehavior('moveOnMouseWheel', e, this._opt);
+        var wheelDelta = e.wheelDelta;
+        var moveSlow = 2; // wheelDelta maybe -0 in chrome mac.
+
+        if (wheelDelta === 0 || !shouldMove) {
+          return;
+        }
+
+        if (shouldMove) {
+          var x = e.offsetX;
+          var y = e.offsetY;
+          var dx = e.event.wheelDeltaX / moveSlow;
+          var dy = e.event.wheelDeltaY / moveSlow;
+          trigger$1(this, 'pan', 'moveOnMouseWheel', e, {
+            dx: dx,
+            dy: dy,
+            oldX: x,
+            oldY: y,
+            newX: x + dx,
+            newY: y + dy,
             isAvailableBehavior: null
           });
         }

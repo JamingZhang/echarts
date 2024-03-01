@@ -870,7 +870,7 @@ export interface RoamOptionMixin {
     /**
      * If enable roam. can be specified 'scale' or 'move'
      */
-    roam?: boolean | 'pan' | 'move' | 'zoom' | 'scale'
+    roam?: boolean | 'pan' | 'move' | 'scrollMove' | 'zoom' | 'scale'
     /**
      * Current center position.
      */
